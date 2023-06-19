@@ -88,3 +88,119 @@ fastlane/test_output
 # https://github.com/johnno1962/injectionforxcode
 
 iOSInjectionProject/
+import UIKit
+import UserNotifications
+
+// Step 1: User Interface
+class ViewController: UIViewController {
+    // Define UI components, such as pickers or text fields
+    // and implement the necessary actions and outlets
+}
+
+// Step 2: Data Retrieval
+class DataRetriever {
+    let apiKey = "YOUR_API_KEY" // Replace with your actual API key
+
+    // Function to fetch historical price data for a stock or forex pair
+    func fetchHistoricalData(for symbol: String, completion: @escaping ([PriceData]?) -> Void) {
+        // Construct the API URL
+        let urlString = "https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=\(symbol)&apikey=\(apiKey)"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        // Create a URLSession task to fetch the data
+        let task = URLSession.shared.dataTask(with: url) { (data, response, error) in
+            // Handle any errors
+            if let error = error {
+                print("Error: \(error.localizedDescription)")
+                completion(nil)
+                return
+            }
+            
+            // Ensure a successful response and valid data
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200,
+                  let data = data else {
+                completion(nil)
+                return
+            }
+            
+            // Parse the retrieved data
+            do {
+                let priceData = try parsePriceData(from: data)
+                completion(priceData)
+            } catch {
+                print("Error parsing data: \(error.localizedDescription)")
+                completion(nil)
+            }
+        }
+        
+        // Start the URLSession task
+        task.resume()
+    }
+    
+    // Helper function to parse price data from JSON
+    private func parsePriceData(from data: Data) throws -> [PriceData] {
+        struct Response: Codable {
+            let timeSeries: [String: PriceInfo]
+            
+            enum CodingKeys: String, CodingKey {
+                case timeSeries = "Time Series (Daily)"
+            }
+        }
+        
+        struct PriceInfo: Codable {
+            let open: String
+            let high: String
+            let low: String
+            let close: String
+            
+            enum CodingKeys: String, CodingKey {
+                case open = "1. open"
+                case high = "2. high"
+                case low = "3. low"
+                case close = "4. close"
+            }
+        }
+        
+        let decoder = JSONDecoder()
+        
+        do {
+            let response = try decoder.decode(Response.self, from: data)
+            let priceData = response.timeSeries.compactMap { (dateString, priceInfo) in
+                guard let date = DateFormatter.date(from: dateString) else {
+                    return nil
+                }
+                
+                let price = PriceData(date: date, open: priceInfo.open, high: priceInfo.high, low: priceInfo.low, close: priceInfo.close)
+                return price
+            }
+            
+            return priceData
+        } catch {
+            throw error
+        }
+    }
+}
+
+// Model for Price Data
+struct PriceData {
+    let date: Date
+    let open: String
+    let high: String
+    let low: String
+    let close: String
+}
+
+// Helper extension for date formatting
+extension DateFormatter {
+    static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+    
+    static func date(from string: String)
+
