@@ -1,0 +1,14 @@
+{
+  "name": "tiktok-content-factory",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["server", "web", "cli"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=server\" \"npm run dev --workspace=web\"",
+    "start": "npm run start --workspace=server",
+    "build": "npm run build --workspace=web"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

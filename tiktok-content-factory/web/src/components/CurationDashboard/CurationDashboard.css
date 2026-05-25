@@ -1,0 +1,99 @@
+.curation-layout {
+  display: flex;
+  gap: 20px;
+  height: calc(100vh - 140px);
+}
+
+.collection-list {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.empty-hint { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
+
+.collection-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s;
+}
+
+.collection-item:hover { background: var(--surface2); }
+.collection-item.active { background: var(--surface2); border-color: var(--border); }
+
+.col-info { flex: 1; min-width: 0; }
+.col-name { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.col-count { font-size: 11px; color: var(--text-muted); }
+
+.col-del {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.collection-item:hover .col-del { opacity: 1; }
+.col-del:hover { color: #ff6060; background: rgba(255,60,60,0.1); }
+
+.collection-content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.collection-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  gap: 12px;
+}
+
+.col-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+.col-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; white-space: nowrap; }
+
+.empty-collection {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 80px 20px;
+  font-size: 14px;
+}
+
+.loading { text-align: center; color: var(--text-muted); padding: 60px 20px; }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal h3 { font-size: 16px; font-weight: 700; }
+.modal input, .modal select { width: 100%; }
+.modal-actions { display: flex; gap: 8px; }
