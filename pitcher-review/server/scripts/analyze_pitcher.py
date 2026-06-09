@@ -223,7 +223,7 @@ def draw_hud(frame, f_data, phase_name):
     H_f, W_f = frame.shape[:2]
     m = f_data['metrics']
     overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (292, 245), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (0, 0), (292, 290), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
 
     color = PHASE_COLORS_BGR.get(phase_name, (150, 150, 150))
@@ -249,11 +249,13 @@ def draw_hud(frame, f_data, phase_name):
     row('Hip-Shoulder Sep',   m.get('hip_shoulder_sep',  0.0), good_thresh=25.0, lo_thresh=10.0)
     row('Elbow Height',       m.get('elbow_height_pct',  0.0), unit='%', good_thresh=5.0)
     row('Elbow Angle',        m.get('elbow_angle',        0.0))
+    row('Hip Speed',  abs(m.get('hip_rotation_speed', 0.0)),   unit='°/s', good_thresh=400.0, lo_thresh=150.0)
+    row('Chest Speed', abs(m.get('chest_rotation_speed', 0.0)), unit='°/s', good_thresh=500.0, lo_thresh=200.0)
     row('Arm Speed', abs(m.get('arm_speed', 0.0)),            unit='°/s', good_thresh=600.0, lo_thresh=200.0)
     row('Trunk Tilt',         m.get('trunk_tilt',         0.0))
 
     cv2.putText(frame, f't={f_data["time"]:.3f}s  #{f_data["frame"]}',
-                (8, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (100, 100, 100), 1)
+                (8, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (100, 100, 100), 1)
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
@@ -414,7 +416,9 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     sho_s   = smooth(sho_angs,   window=9)
     arm_s   = smooth(arm_angs,   window=5)
     trunk_s = smooth(trunk_angs, window=9)
-    arm_vel = angular_velocity(arm_s, fps, window=7)
+    arm_vel  = angular_velocity(arm_s, fps, window=7)
+    hip_vel  = angular_velocity(hip_s, fps, window=9)
+    chest_vel = angular_velocity(sho_s, fps, window=9)
 
     # Per-frame metrics
     for i, rec in enumerate(raw):
@@ -425,13 +429,15 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
             elbow_h = round((lms[ts_name]['y'] - lms[te_name]['y']) * 100, 2)
 
         rec['metrics'] = {
-            'hip_rotation':      round(hip_s[i],       2),
-            'shoulder_rotation': round(sho_s[i],       2),
-            'hip_shoulder_sep':  round(abs(hss),        2),
-            'elbow_angle':       round(elbow_angs[i],  2),
-            'elbow_height_pct':  elbow_h,
-            'arm_speed':         round(arm_vel[i],     2),
-            'trunk_tilt':        round(trunk_s[i],     2),
+            'hip_rotation':        round(hip_s[i],       2),
+            'shoulder_rotation':   round(sho_s[i],       2),
+            'hip_shoulder_sep':    round(abs(hss),        2),
+            'elbow_angle':         round(elbow_angs[i],  2),
+            'elbow_height_pct':    elbow_h,
+            'hip_rotation_speed':  round(hip_vel[i],     2),
+            'chest_rotation_speed': round(chest_vel[i],  2),
+            'arm_speed':           round(arm_vel[i],     2),
+            'trunk_tilt':          round(trunk_s[i],     2),
         }
 
     # Phases
@@ -440,11 +446,17 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
         rec['phase'] = phase_for_frame(phases, i)
 
     # Summary
-    arm_speeds = [abs(r['metrics']['arm_speed'])    for r in raw]
-    hss_vals   = [r['metrics']['hip_shoulder_sep']  for r in raw]
+    arm_speeds   = [abs(r['metrics']['arm_speed'])           for r in raw]
+    hip_speeds   = [abs(r['metrics']['hip_rotation_speed'])  for r in raw]
+    chest_speeds = [abs(r['metrics']['chest_rotation_speed']) for r in raw]
+    hss_vals     = [r['metrics']['hip_shoulder_sep']         for r in raw]
     release_f  = phases.get('release',      (0, 0))[0]
     mer_f      = phases.get('acceleration', (0, 0))[0]
     fs_f       = phases.get('foot_strike',  (0, 0))[0]
+
+    arm_peak_f   = int(np.argmax(arm_speeds))
+    hip_peak_f   = int(np.argmax(hip_speeds))
+    chest_peak_f = int(np.argmax(chest_speeds))
 
     summary = {
         'fps': round(fps, 2),
@@ -455,17 +467,32 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
         'frame_height': H,
         'phases': {k: {'start': int(v[0]), 'end': int(v[1])} for k, v in phases.items()},
         'peak': {
-            'max_arm_speed':        round(max(arm_speeds), 1),
-            'max_arm_speed_frame':  int(np.argmax(arm_speeds)),
-            'max_hip_shoulder_sep': round(max(hss_vals), 1),
-            'max_hss_frame':        int(np.argmax(hss_vals)),
-            'arm_speed_at_release': round(arm_speeds[release_f], 1) if release_f < n else 0,
-            'hss_at_foot_strike':   round(hss_vals[fs_f], 1),
+            'max_arm_speed':          round(max(arm_speeds), 1),
+            'max_arm_speed_frame':    arm_peak_f,
+            'max_hip_rotation_speed':   round(max(hip_speeds), 1),
+            'max_hip_rotation_speed_frame': hip_peak_f,
+            'max_chest_rotation_speed':   round(max(chest_speeds), 1),
+            'max_chest_rotation_speed_frame': chest_peak_f,
+            'max_hip_shoulder_sep':   round(max(hss_vals), 1),
+            'max_hss_frame':          int(np.argmax(hss_vals)),
+            'arm_speed_at_release':   round(arm_speeds[release_f], 1) if release_f < n else 0,
+            'hss_at_foot_strike':     round(hss_vals[fs_f], 1),
         },
         'key_frames': {
             'foot_strike':  int(fs_f),
             'max_ext_rot':  int(mer_f),
             'release':      int(release_f),
+        },
+        # Kinetic-chain sequencing: efficient deliveries fire hips, then chest,
+        # then arm — each peak progressively later, like links in a whip.
+        'sequencing': {
+            'hip_peak_frame':    hip_peak_f,
+            'chest_peak_frame':  chest_peak_f,
+            'arm_peak_frame':    arm_peak_f,
+            'hip_to_chest_ms':   round((chest_peak_f - hip_peak_f) / fps * 1000, 1),
+            'chest_to_arm_ms':   round((arm_peak_f - chest_peak_f) / fps * 1000, 1),
+            'hip_to_arm_ms':     round((arm_peak_f - hip_peak_f) / fps * 1000, 1),
+            'proper_order':      hip_peak_f <= chest_peak_f <= arm_peak_f,
         },
     }
 

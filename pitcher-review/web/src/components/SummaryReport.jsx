@@ -4,6 +4,25 @@ function grade(val, good, avg) {
   return           { letter: 'C', color: '#ff8844' };
 }
 
+function SequenceNode({ label, ms, color }) {
+  return (
+    <div className="seq-node">
+      <span className="seq-dot" style={{ background: color }} />
+      <span className="seq-label">{label}</span>
+      <span className="seq-time">{ms}ms</span>
+    </div>
+  );
+}
+
+function SequenceArrow({ ms, ok }) {
+  return (
+    <div className={`seq-arrow ${ok ? 'ok' : 'bad'}`}>
+      <span className="seq-arrow-line" />
+      <span className="seq-arrow-gap">{ms}ms</span>
+    </div>
+  );
+}
+
 function MetricCard({ label, value, unit, grade: g, note }) {
   return (
     <div className="summary-card">
@@ -23,11 +42,13 @@ function MetricCard({ label, value, unit, grade: g, note }) {
 }
 
 export default function SummaryReport({ summary, frames }) {
-  const { peak, key_frames, phases, fps, duration_s, throw_hand } = summary;
+  const { peak, key_frames, phases, fps, duration_s, throw_hand, sequencing } = summary;
 
   if (!peak) return <p style={{ color: '#888', padding: 24 }}>No summary data available.</p>;
 
-  const maxArmSpeed = peak.max_arm_speed || 0;
+  const maxArmSpeed   = peak.max_arm_speed || 0;
+  const maxHipSpeed   = peak.max_hip_rotation_speed || 0;
+  const maxChestSpeed = peak.max_chest_rotation_speed || 0;
   const maxHss      = peak.max_hip_shoulder_sep || 0;
   const releaseF    = key_frames?.release ?? 0;
   const fsF         = key_frames?.foot_strike ?? 0;
@@ -47,6 +68,16 @@ export default function SummaryReport({ summary, frames }) {
   return (
     <div className="summary-report">
       <div className="summary-hero">
+        <div className="hero-stat">
+          <span className="hero-val">{maxHipSpeed.toFixed(0)}</span>
+          <span className="hero-unit">°/s</span>
+          <span className="hero-label">Peak Hip Speed</span>
+        </div>
+        <div className="hero-stat">
+          <span className="hero-val">{maxChestSpeed.toFixed(0)}</span>
+          <span className="hero-unit">°/s</span>
+          <span className="hero-label">Peak Chest Speed</span>
+        </div>
         <div className="hero-stat">
           <span className="hero-val">{maxArmSpeed.toFixed(0)}</span>
           <span className="hero-unit">°/s</span>
@@ -70,6 +101,20 @@ export default function SummaryReport({ summary, frames }) {
       </div>
 
       <div className="summary-grid">
+        <MetricCard
+          label="Max Hip Rotation Speed"
+          value={maxHipSpeed}
+          unit="°/s"
+          grade={grade(maxHipSpeed, 500, 250)}
+          note="How fast the hips rotate — the first link in the kinetic chain."
+        />
+        <MetricCard
+          label="Max Chest Rotation Speed"
+          value={maxChestSpeed}
+          unit="°/s"
+          grade={grade(maxChestSpeed, 700, 350)}
+          note="Shoulder/torso angular velocity — should peak after the hips."
+        />
         <MetricCard
           label="Max Arm Speed"
           value={maxArmSpeed}
@@ -112,6 +157,35 @@ export default function SummaryReport({ summary, frames }) {
         />
       </div>
 
+      {sequencing && (
+        <div className="sequencing-panel">
+          <h3>Kinetic Chain Sequencing</h3>
+          <p className="sequencing-intro">
+            Efficient deliveries fire like a whip: the hips reach peak rotation speed first,
+            then the chest, then the arm — each link transferring energy to the next.
+          </p>
+          <div className="sequence-row">
+            <SequenceNode label="Hip Peak"   ms={(sequencing.hip_peak_frame / fps * 1000).toFixed(0)} color="#00c8ff" />
+            <SequenceArrow ms={sequencing.hip_to_chest_ms} ok={sequencing.hip_to_chest_ms >= 0} />
+            <SequenceNode label="Chest Peak" ms={(sequencing.chest_peak_frame / fps * 1000).toFixed(0)} color="#ffaa00" />
+            <SequenceArrow ms={sequencing.chest_to_arm_ms} ok={sequencing.chest_to_arm_ms >= 0} />
+            <SequenceNode label="Arm Peak"   ms={(sequencing.arm_peak_frame / fps * 1000).toFixed(0)} color="#ff4444" />
+          </div>
+          <div className="sequence-verdict">
+            {sequencing.proper_order ? (
+              <span className="obs-good-inline">
+                ✓ Proper sequence — hips lead, chest follows, arm finishes ({sequencing.hip_to_arm_ms}ms hip-to-arm).
+              </span>
+            ) : (
+              <span className="obs-warn-inline">
+                ⚠ Sequence out of order — peaks aren't firing hip → chest → arm. This often shows up as
+                "arm-only" throwing where the body rotates together instead of sequentially.
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="recommendations">
         <h3>Key Observations</h3>
         <ul>
@@ -151,6 +225,20 @@ export default function SummaryReport({ summary, frames }) {
             <li className="obs-warn">
               <strong>Long MER-to-release window ({merToRelease}ms):</strong>{' '}
               Arm lingers at max external rotation — consider a more explosive transition.
+            </li>
+          )}
+          {sequencing && !sequencing.proper_order && (
+            <li className="obs-warn">
+              <strong>Out-of-sequence kinetic chain:</strong>{' '}
+              Hip, chest, and arm rotation speeds aren't peaking in the hip → chest → arm order.
+              This usually means the upper body is rotating with the hips instead of being "left behind"
+              to build separation, reducing the whip effect and adding arm strain.
+            </li>
+          )}
+          {sequencing && sequencing.proper_order && sequencing.hip_to_arm_ms < 150 && (
+            <li className="obs-good">
+              <strong>Tight, well-sequenced delivery ({sequencing.hip_to_arm_ms}ms hip-to-arm):</strong>{' '}
+              Energy transfers quickly from hips to arm — a hallmark of efficient, high-velocity mechanics.
             </li>
           )}
           <li className="obs-info">

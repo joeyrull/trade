@@ -128,6 +128,8 @@ function LiveMetrics({ frame, summary }) {
     { label: 'Hip-Shoulder Sep',  val: m.hip_shoulder_sep,  unit: '°',   good: v => v > 20 },
     { label: 'Elbow Height',      val: m.elbow_height_pct,  unit: '%',   good: v => v > 3  },
     { label: 'Elbow Angle',       val: m.elbow_angle,       unit: '°',   neutral: true      },
+    { label: 'Hip Speed',         val: Math.abs(m.hip_rotation_speed),   unit: '°/s', good: v => v > 300 },
+    { label: 'Chest Speed',       val: Math.abs(m.chest_rotation_speed), unit: '°/s', good: v => v > 400 },
     { label: 'Arm Speed',         val: Math.abs(m.arm_speed), unit: '°/s', good: v => v > 500 },
     { label: 'Trunk Tilt',        val: m.trunk_tilt,        unit: '°',   neutral: true      },
   ];
@@ -153,13 +155,26 @@ function LiveMetrics({ frame, summary }) {
         );
       })}
 
-      <div className="arm-speed-bar-wrap">
-        <div
-          className="arm-speed-bar"
-          style={{ width: `${Math.min(100, Math.abs(m.arm_speed) / 10)}%` }}
-        />
-        <span className="arm-speed-label">Arm Speed</span>
+      <div className="speed-bars">
+        <SpeedBar label="Hip"   value={Math.abs(m.hip_rotation_speed)}   max={800} color="#00c8ff" />
+        <SpeedBar label="Chest" value={Math.abs(m.chest_rotation_speed)} max={1000} color="#ffaa00" />
+        <SpeedBar label="Arm"   value={Math.abs(m.arm_speed)}            max={1200} color="#ff4444" />
       </div>
+    </div>
+  );
+}
+
+function SpeedBar({ label, value, max, color }) {
+  return (
+    <div className="speed-bar-row">
+      <span className="speed-bar-label">{label}</span>
+      <div className="speed-bar-track">
+        <div
+          className="speed-bar-fill"
+          style={{ width: `${Math.min(100, (value / max) * 100)}%`, background: color }}
+        />
+      </div>
+      <span className="speed-bar-val">{value.toFixed(0)}°/s</span>
     </div>
   );
 }

@@ -100,8 +100,8 @@ export default function VideoUploader({ onUpload }) {
             <span className="tip-icon">📷</span>
             <span>
               {throwHand === 'left'
-                ? 'Camera at first base — pitcher's right side visible. Throwing (left) arm faces away from camera.'
-                : 'Camera at third base — pitcher's left side visible. Throwing (right) arm faces away from camera.'}
+                ? "Camera at first base — pitcher's right side visible. Throwing (left) arm faces away from camera."
+                : "Camera at third base — pitcher's left side visible. Throwing (right) arm faces away from camera."}
             </span>
           </div>
         </div>

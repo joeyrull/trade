@@ -26,6 +26,8 @@ export default function MetricsChart({ frames, summary, currentFrame, onSeek }) 
       hip: parseFloat(f.metrics.hip_rotation.toFixed(2)),
       shoulder: parseFloat(f.metrics.shoulder_rotation.toFixed(2)),
       hss: parseFloat(f.metrics.hip_shoulder_sep.toFixed(2)),
+      hipSpeed: parseFloat(Math.abs(f.metrics.hip_rotation_speed).toFixed(1)),
+      chestSpeed: parseFloat(Math.abs(f.metrics.chest_rotation_speed).toFixed(1)),
       armSpeed: parseFloat(Math.abs(f.metrics.arm_speed).toFixed(1)),
       elbowAngle: parseFloat(f.metrics.elbow_angle.toFixed(1)),
       elbowH: parseFloat(f.metrics.elbow_height_pct.toFixed(2)),
@@ -76,9 +78,9 @@ export default function MetricsChart({ frames, summary, currentFrame, onSeek }) 
         </ResponsiveContainer>
       </ChartBlock>
 
-      {/* Arm Speed */}
-      <ChartBlock title="Arm Speed (°/s)">
-        <ResponsiveContainer width="100%" height={200}>
+      {/* Kinetic Chain Speed: Hip -> Chest -> Arm */}
+      <ChartBlock title="Kinetic Chain Speed — Hip → Chest → Arm (°/s)">
+        <ResponsiveContainer width="100%" height={220}>
           <LineChart data={chartData} onClick={d => d?.activePayload && onSeek(d.activePayload[0]?.payload?.frame)}>
             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
             <XAxis dataKey="t" stroke="#888" tick={{ fontSize: 11 }} label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: '#888', fontSize: 11 }} />
@@ -94,7 +96,9 @@ export default function MetricsChart({ frames, summary, currentFrame, onSeek }) 
               <ReferenceLine key={r.name} x={r.t} stroke={r.color} strokeDasharray="4 2" />
             ))}
             <ReferenceLine x={currentT} stroke="#fff" strokeDasharray="2 2" />
-            <Line type="monotone" dataKey="armSpeed" name="Arm Speed" stroke="#ff4444" strokeWidth={2} dot={<CustomDot />} />
+            <Line type="monotone" dataKey="hipSpeed"   name="Hip Speed"   stroke="#00c8ff" strokeWidth={2} dot={<CustomDot />} />
+            <Line type="monotone" dataKey="chestSpeed" name="Chest Speed" stroke="#ffaa00" strokeWidth={2} dot={<CustomDot />} />
+            <Line type="monotone" dataKey="armSpeed"   name="Arm Speed"   stroke="#ff4444" strokeWidth={2} dot={<CustomDot />} />
           </LineChart>
         </ResponsiveContainer>
       </ChartBlock>
