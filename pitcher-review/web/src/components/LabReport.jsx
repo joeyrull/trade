@@ -4,6 +4,7 @@ import {
 } from 'recharts';
 import { useMemo } from 'react';
 import { METRICS_LIBRARY } from '../data/metricsLibrary';
+import LabScorecard from './LabScorecard';
 
 const PHASE_COLORS = {
   setup: '#888', windup: '#ffd700', stride: '#00c8ff',
@@ -59,6 +60,8 @@ export default function LabReport({ summary, frames, currentFrame, onSeek }) {
         how it trended over the course of the pitch, and how to work on it. Click any
         chart to jump the video to that point in the delivery.
       </p>
+
+      <LabScorecard summary={summary} frames={frames} />
 
       {METRICS_LIBRARY.map(m => (
         <LabMetricCard

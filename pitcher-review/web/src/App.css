@@ -592,6 +592,68 @@ body {
   line-height: 1.6;
   max-width: 760px;
 }
+/* Scorecard: pillar groups with a percentile-style range bar per metric */
+.lab-scorecard {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+.pillar-card {
+  background: #151820;
+  border: 1px solid #252a35;
+  border-radius: 10px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.pillar-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.pillar-name { font-size: 16px; color: #fff; margin: 0 0 4px; }
+.pillar-desc { font-size: 12px; color: #8a95a8; line-height: 1.5; margin: 0; max-width: 380px; }
+.pillar-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+}
+.pillar-score-val { font-size: 28px; font-weight: 800; line-height: 1; }
+.pillar-score-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+
+.pillar-metrics { display: flex; flex-direction: column; gap: 14px; }
+.pillar-metric { display: flex; flex-direction: column; gap: 4px; }
+.pillar-metric-top { display: flex; justify-content: space-between; font-size: 12px; }
+.pillar-metric-label { color: #aab2c4; }
+.pillar-metric-value { color: #fff; font-weight: 700; }
+.pillar-bar-track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #c0501a 0%, #c0501a 50%, #9aa015 50%, #9aa015 90%, #1a8a4a 90%, #1a8a4a 100%);
+}
+.pillar-bar-marker {
+  position: absolute;
+  top: -3px;
+  width: 3px;
+  height: 14px;
+  background: #fff;
+  border-radius: 2px;
+  transform: translateX(-1.5px);
+  box-shadow: 0 0 4px rgba(255,255,255,0.8);
+}
+.pillar-bar-zones {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #556;
+}
+.pillar-bar-zones span:nth-child(2) { transform: translateX(-50%); }
+.pillar-bar-zones span:nth-child(3) { margin-left: auto; }
+
 .lab-metric-card {
   background: #151820;
   border: 1px solid #252a35;

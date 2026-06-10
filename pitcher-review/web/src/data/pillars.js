@@ -1,0 +1,72 @@
+// Pillar groupings for the Lab Report scorecard, inspired by how labs like
+// Driveline/Maven group a delivery into a handful of categories, each scored
+// against an "average" and "elite" benchmark band.
+
+function elbowHeightAtMER(summary, frames) {
+  const merF = summary.key_frames?.max_ext_rot ?? 0;
+  return frames[merF]?.metrics?.elbow_height_pct ?? 0;
+}
+
+export const PILLARS = [
+  {
+    name: 'Lower Half',
+    description: 'How explosively the hips initiate the delivery — the first link in the kinetic chain.',
+    metrics: [
+      {
+        label: 'Hip Rotation Speed',
+        unit: '°/s',
+        avg: 250,
+        good: 500,
+        getValue: (summary) => summary.peak?.max_hip_rotation_speed,
+      },
+    ],
+  },
+  {
+    name: 'Sequencing',
+    description: 'How efficiently energy transfers from hips → chest → arm, building the "whip" through the body.',
+    metrics: [
+      {
+        label: 'Chest Rotation Speed',
+        unit: '°/s',
+        avg: 350,
+        good: 700,
+        getValue: (summary) => summary.peak?.max_chest_rotation_speed,
+      },
+      {
+        label: 'Hip-Shoulder Separation',
+        unit: '°',
+        avg: 12,
+        good: 25,
+        getValue: (summary) => summary.peak?.max_hip_shoulder_sep,
+      },
+      {
+        label: 'Hip → Arm Timing',
+        unit: 'ms',
+        avg: 250,
+        good: 120,
+        lowerIsBetter: true,
+        getValue: (summary) => summary.sequencing?.hip_to_arm_ms,
+      },
+    ],
+  },
+  {
+    name: 'Arm Action',
+    description: 'Arm speed and elbow positioning through acceleration and release.',
+    metrics: [
+      {
+        label: 'Arm Speed',
+        unit: '°/s',
+        avg: 400,
+        good: 700,
+        getValue: (summary) => summary.peak?.max_arm_speed,
+      },
+      {
+        label: 'Elbow Height at Max External Rotation',
+        unit: '% above shoulder',
+        avg: 0,
+        good: 5,
+        getValue: elbowHeightAtMER,
+      },
+    ],
+  },
+];
