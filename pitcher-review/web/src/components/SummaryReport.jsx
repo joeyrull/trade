@@ -23,7 +23,7 @@ function SequenceArrow({ ms, ok }) {
   );
 }
 
-function MetricCard({ label, value, unit, grade: g, note }) {
+function MetricCard({ label, value, unit, grade: g, note, lowConfidence }) {
   return (
     <div className="summary-card">
       <div className="summary-card-top">
@@ -35,14 +35,51 @@ function MetricCard({ label, value, unit, grade: g, note }) {
       <div className="summary-value">
         {typeof value === 'number' ? value.toFixed(1) : value}
         <span className="summary-unit">{unit}</span>
+        <LowConfBadge show={lowConfidence} />
       </div>
       {note && <p className="summary-note">{note}</p>}
     </div>
   );
 }
 
+function LowConfBadge({ show }) {
+  if (!show) return null;
+  return (
+    <span className="low-conf-badge" title="Pose tracking confidence was low on this frame — value may be inaccurate.">
+      ⚠
+    </span>
+  );
+}
+
+function TrackingQualityBanner({ quality, phaseConfidence }) {
+  if (quality == null) return null;
+  const level = quality >= 80 ? 'good' : quality >= 50 ? 'warn' : 'bad';
+  const lowPhases = Object.entries(phaseConfidence || {})
+    .filter(([, pct]) => pct < 50)
+    .map(([name, pct]) => `${name.replace(/_/g, ' ')} (${pct.toFixed(0)}%)`);
+
+  return (
+    <div className={`tracking-banner tracking-${level}`}>
+      <strong>Pose Tracking Confidence: {quality.toFixed(0)}%</strong>
+      {level !== 'good' && (
+        <p className="tracking-banner-note">
+          {level === 'bad'
+            ? 'MediaPipe lost reliable tracking of the throwing arm and/or torso for much of this clip. '
+            : 'Tracking was unreliable for part of this clip. '}
+          {lowPhases.length > 0 && (
+            <>Low-confidence phases: <strong>{lowPhases.join(', ')}</strong>. </>
+          )}
+          Metrics flagged with ⚠ come from low-confidence frames and may not be accurate.
+          For best results, keep the pitcher large in frame against a plain, uncluttered background.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function SummaryReport({ summary, frames }) {
-  const { peak, key_frames, phases, fps, duration_s, throw_hand, sequencing } = summary;
+  const { peak, key_frames, phases, fps, duration_s, throw_hand, sequencing,
+          tracking_quality, phase_confidence } = summary;
 
   if (!peak) return <p style={{ color: '#888', padding: 24 }}>No summary data available.</p>;
 
@@ -67,24 +104,26 @@ export default function SummaryReport({ summary, frames }) {
 
   return (
     <div className="summary-report">
+      <TrackingQualityBanner quality={tracking_quality} phaseConfidence={phase_confidence} />
+
       <div className="summary-hero">
         <div className="hero-stat">
-          <span className="hero-val">{maxHipSpeed.toFixed(0)}</span>
+          <span className="hero-val">{maxHipSpeed.toFixed(0)}<LowConfBadge show={peak.max_hip_rotation_speed_low_confidence} /></span>
           <span className="hero-unit">°/s</span>
           <span className="hero-label">Peak Hip Speed</span>
         </div>
         <div className="hero-stat">
-          <span className="hero-val">{maxChestSpeed.toFixed(0)}</span>
+          <span className="hero-val">{maxChestSpeed.toFixed(0)}<LowConfBadge show={peak.max_chest_rotation_speed_low_confidence} /></span>
           <span className="hero-unit">°/s</span>
           <span className="hero-label">Peak Chest Speed</span>
         </div>
         <div className="hero-stat">
-          <span className="hero-val">{maxArmSpeed.toFixed(0)}</span>
+          <span className="hero-val">{maxArmSpeed.toFixed(0)}<LowConfBadge show={peak.max_arm_speed_low_confidence} /></span>
           <span className="hero-unit">°/s</span>
           <span className="hero-label">Peak Arm Speed</span>
         </div>
         <div className="hero-stat">
-          <span className="hero-val">{maxHss.toFixed(1)}</span>
+          <span className="hero-val">{maxHss.toFixed(1)}<LowConfBadge show={peak.max_hss_low_confidence} /></span>
           <span className="hero-unit">°</span>
           <span className="hero-label">Max Hip-Shoulder Sep</span>
         </div>
@@ -94,7 +133,7 @@ export default function SummaryReport({ summary, frames }) {
           <span className="hero-label">Foot Strike → Release</span>
         </div>
         <div className="hero-stat">
-          <span className="hero-val">{merToRelease}</span>
+          <span className="hero-val">{merToRelease}<LowConfBadge show={peak.arm_speed_at_release_low_confidence} /></span>
           <span className="hero-unit">ms</span>
           <span className="hero-label">MER → Release</span>
         </div>
@@ -107,6 +146,7 @@ export default function SummaryReport({ summary, frames }) {
           unit="°/s"
           grade={grade(maxHipSpeed, 500, 250)}
           note="How fast the hips rotate — the first link in the kinetic chain."
+          lowConfidence={peak.max_hip_rotation_speed_low_confidence}
         />
         <MetricCard
           label="Max Chest Rotation Speed"
@@ -114,13 +154,15 @@ export default function SummaryReport({ summary, frames }) {
           unit="°/s"
           grade={grade(maxChestSpeed, 700, 350)}
           note="Shoulder/torso angular velocity — should peak after the hips."
+          lowConfidence={peak.max_chest_rotation_speed_low_confidence}
         />
         <MetricCard
           label="Max Arm Speed"
           value={maxArmSpeed}
           unit="°/s"
           grade={grade(maxArmSpeed, 700, 400)}
-          note="Arm angular velocity at peak — higher = more whip through the zone."
+          note="Elbow extension rate at peak — higher = more whip through the zone."
+          lowConfidence={peak.max_arm_speed_low_confidence}
         />
         <MetricCard
           label="Max Hip-Shoulder Sep"
@@ -128,6 +170,7 @@ export default function SummaryReport({ summary, frames }) {
           unit="°"
           grade={grade(maxHss, 25, 12)}
           note="X-factor: hip opening ahead of shoulders. Elite range: 25–45°."
+          lowConfidence={peak.max_hss_low_confidence}
         />
         <MetricCard
           label="Hip-Shoulder Sep at Foot Strike"
@@ -135,6 +178,7 @@ export default function SummaryReport({ summary, frames }) {
           unit="°"
           grade={grade(hsAtFs, 20, 8)}
           note="Separation when lead foot lands — the stored torque available for acceleration."
+          lowConfidence={peak.hss_at_foot_strike_low_confidence}
         />
         <MetricCard
           label="Elbow Height at MER"
@@ -239,6 +283,14 @@ export default function SummaryReport({ summary, frames }) {
             <li className="obs-good">
               <strong>Tight, well-sequenced delivery ({sequencing.hip_to_arm_ms}ms hip-to-arm):</strong>{' '}
               Energy transfers quickly from hips to arm — a hallmark of efficient, high-velocity mechanics.
+            </li>
+          )}
+          {tracking_quality != null && tracking_quality < 80 && (
+            <li className="obs-warn">
+              <strong>Pose tracking confidence: {tracking_quality.toFixed(0)}%:</strong>{' '}
+              MediaPipe couldn't reliably track the pitcher's pose for a meaningful portion of this clip
+              (see the tracking banner above for which phases were affected). Treat any ⚠-flagged
+              metrics as estimates rather than precise measurements.
             </li>
           )}
           <li className="obs-info">

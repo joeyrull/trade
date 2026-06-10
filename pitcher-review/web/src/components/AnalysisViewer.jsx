@@ -139,6 +139,11 @@ function LiveMetrics({ frame, summary }) {
       <div className="phase-badge" style={{ background: PHASE_COLORS[phase] || '#888' }}>
         {phase.replace(/_/g, ' ').toUpperCase()}
       </div>
+      {m.low_confidence && (
+        <div className="low-conf-indicator" title="MediaPipe pose tracking confidence is low for this frame — metrics below may be inaccurate.">
+          ⚠ Low-confidence tracking
+        </div>
+      )}
       <p className="frame-label">Frame {frame.frame} · t={frame.time.toFixed(3)}s</p>
 
       {metricRows.map(({ label, val, unit, good, neutral }) => {

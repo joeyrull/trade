@@ -78,6 +78,12 @@ SKELETON_CONNECTIONS = [
     (26, 28, (140, 140, 140), 2),   # right shin
 ]
 
+# ── Robustness thresholds ───────────────────────────────────────────────────
+MIN_VISIBILITY   = 0.5   # landmark visibility below this is not trusted
+MAX_POS_JUMP     = 0.15  # max plausible frame-to-frame landmark move (normalized coords)
+MIN_ROT_VEC_MAG  = 0.035 # min |hip/shoulder line vector| (x-z plane) to trust its angle
+MIN_LIMB_VEC_MAG = 0.04  # min |upper-arm or forearm| (x-y plane) to trust the elbow angle
+
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
 
@@ -106,6 +112,48 @@ def angular_velocity(angles_deg, fps, window=7):
     if len(vel) > window + 2:
         vel = savgol_filter(vel, window | 1, 3)
     return vel.tolist()
+
+
+def build_robust_series(raw, name, min_vis=MIN_VISIBILITY, max_jump=MAX_POS_JUMP):
+    """Track a landmark's (x, y, z) across frames, holding the last trusted
+    position whenever the landmark is missing, low-visibility, or jumps
+    implausibly far in a single frame (a sign MediaPipe has locked onto the
+    wrong object, e.g. background clutter). Returns (xs, ys, zs, valid)."""
+    n = len(raw)
+    xs = np.zeros(n); ys = np.zeros(n); zs = np.zeros(n)
+    valid = np.zeros(n, dtype=bool)
+    last = None
+    for i, rec in enumerate(raw):
+        lm = rec['landmarks'].get(name)
+        ok = lm is not None and lm['v'] >= min_vis
+        if ok and last is not None:
+            if ((lm['x'] - last[0]) ** 2 + (lm['y'] - last[1]) ** 2) ** 0.5 > max_jump:
+                ok = False
+        if ok:
+            last = (lm['x'], lm['y'], lm['z'])
+            valid[i] = True
+        elif last is None and lm is not None:
+            last = (lm['x'], lm['y'], lm['z'])
+        if last is not None:
+            xs[i], ys[i], zs[i] = last
+    return xs, ys, zs, valid
+
+
+def filter_angle_series(angles, valid, max_jump_deg):
+    """Hold the previous angle for any frame already flagged invalid, or
+    whose frame-to-frame change exceeds a physically plausible bound.
+    Returns (angles, still_valid)."""
+    out = list(angles)
+    ok = list(valid)
+    for i in range(1, len(out)):
+        if not ok[i]:
+            out[i] = out[i - 1]
+            continue
+        d = (out[i] - out[i - 1] + 180) % 360 - 180
+        if abs(d) > max_jump_deg:
+            out[i] = out[i - 1]
+            ok[i] = False
+    return out, ok
 
 
 # ── Phase detection ───────────────────────────────────────────────────────────
@@ -223,7 +271,7 @@ def draw_hud(frame, f_data, phase_name):
     H_f, W_f = frame.shape[:2]
     m = f_data['metrics']
     overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (292, 290), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (0, 0), (292, 312), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
 
     color = PHASE_COLORS_BGR.get(phase_name, (150, 150, 150))
@@ -254,8 +302,13 @@ def draw_hud(frame, f_data, phase_name):
     row('Arm Speed', abs(m.get('arm_speed', 0.0)),            unit='°/s', good_thresh=600.0, lo_thresh=200.0)
     row('Trunk Tilt',         m.get('trunk_tilt',         0.0))
 
+    if m.get('low_confidence'):
+        cv2.putText(frame, '~ low-confidence tracking', (8, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 140, 255), 1)
+        y += 22
+
     cv2.putText(frame, f't={f_data["time"]:.3f}s  #{f_data["frame"]}',
-                (8, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (100, 100, 100), 1)
+                (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (100, 100, 100), 1)
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
@@ -348,96 +401,127 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     if n == 0:
         raise ValueError('No frames extracted from video')
 
-    # Wrist speed (for phase detection)
-    tw_name = f'{throw_side}_wrist'
-    prev_wx = prev_wy = None
-    for rec in raw:
-        if tw_name in rec['landmarks']:
-            wx = rec['landmarks'][tw_name]['x']
-            wy = rec['landmarks'][tw_name]['y']
-            if prev_wx is not None:
-                rec['_wrist_speed'] = float(np.sqrt((wx-prev_wx)**2 + (wy-prev_wy)**2) * fps)
-            prev_wx, prev_wy = wx, wy
-        else:
-            prev_wx = prev_wy = None
-
-    # Angle time series
-    hip_angs, sho_angs, arm_angs, elbow_angs, trunk_angs = [], [], [], [], []
-
     ts_name = f'{throw_side}_shoulder'
     te_name = f'{throw_side}_elbow'
     tw_name = f'{throw_side}_wrist'
 
-    for rec in raw:
-        lms = rec['landmarks']
-        if not rec['_pose_ok'] or 'left_hip' not in lms:
-            hip_angs.append(hip_angs[-1] if hip_angs else 0.0)
-            sho_angs.append(sho_angs[-1] if sho_angs else 0.0)
-            arm_angs.append(arm_angs[-1] if arm_angs else 0.0)
-            elbow_angs.append(elbow_angs[-1] if elbow_angs else 90.0)
-            trunk_angs.append(trunk_angs[-1] if trunk_angs else 0.0)
-            continue
+    # ── Robust landmark tracks ─────────────────────────────────────────────
+    # Hold the last trusted position whenever a landmark is missing,
+    # low-visibility, or jumps implausibly far in one frame (a sign
+    # MediaPipe has locked onto the wrong object, e.g. background clutter).
+    lhx, lhy, lhz, lh_ok = build_robust_series(raw, 'left_hip')
+    rhx, rhy, rhz, rh_ok = build_robust_series(raw, 'right_hip')
+    lsx, lsy, lsz, ls_ok = build_robust_series(raw, 'left_shoulder')
+    rsx, rsy, rsz, rs_ok = build_robust_series(raw, 'right_shoulder')
+    tex, tey, tez, te_ok = build_robust_series(raw, te_name)
+    twx, twy, twz, tw_ok = build_robust_series(raw, tw_name)
+    tsx, tsy, tsz, ts_ok = build_robust_series(raw, ts_name)
 
-        lh, rh = lms['left_hip'],      lms['right_hip']
-        ls, rs = lms['left_shoulder'],  lms['right_shoulder']
+    low_conf = [not (lh_ok[i] and rh_ok[i] and ls_ok[i] and rs_ok[i]
+                      and te_ok[i] and tw_ok[i] and ts_ok[i])
+                for i in range(n)]
 
-        # Transverse-plane rotation (using MediaPipe depth z)
-        hip_ang = float(np.degrees(np.arctan2(rh['z'] - lh['z'], rh['x'] - lh['x'])))
-        sho_ang = float(np.degrees(np.arctan2(rs['z'] - ls['z'], rs['x'] - ls['x'])))
-        hip_angs.append(hip_ang)
-        sho_angs.append(sho_ang)
-
-        # Throwing arm angle (shoulder → wrist, in 2D frame)
-        if ts_name in lms and tw_name in lms:
-            ts, tw = lms[ts_name], lms[tw_name]
-            arm_ang = float(np.degrees(np.arctan2(tw['y'] - ts['y'], tw['x'] - ts['x'])))
-            arm_angs.append(arm_ang)
+    # Wrist speed (smoothed, robust) — used for phase detection
+    twx_p = smooth(twx.tolist(), window=7)
+    twy_p = smooth(twy.tolist(), window=7)
+    for i, rec in enumerate(raw):
+        if i == 0:
+            rec['_wrist_speed'] = 0.0
         else:
-            arm_angs.append(arm_angs[-1] if arm_angs else 0.0)
+            rec['_wrist_speed'] = float(np.hypot(twx_p[i] - twx_p[i-1], twy_p[i] - twy_p[i-1]) * fps)
 
-        # Elbow angle
-        if ts_name in lms and te_name in lms and tw_name in lms:
-            ts, te, tw = lms[ts_name], lms[te_name], lms[tw_name]
-            ea = angle_3pt(ts['x'], ts['y'], te['x'], te['y'], tw['x'], tw['y'])
-            elbow_angs.append(ea)
-        else:
-            elbow_angs.append(elbow_angs[-1] if elbow_angs else 90.0)
+    # ── Rotation angles (transverse plane, x-z) ────────────────────────────
+    # atan2(dz, dx) is only meaningful when the hip/shoulder line projects to
+    # a non-trivial vector; when both dx and dz are near zero, MediaPipe depth
+    # noise dominates and the angle swings wildly. Hold the previous angle in
+    # that case, then reject any remaining implausible frame-to-frame jumps.
+    max_rot_jump = 1200.0 / fps  # deg/frame ≈ 1200 deg/s cap
 
-        # Trunk tilt
-        hip_mx = (lh['x'] + rh['x']) / 2
-        hip_my = (lh['y'] + rh['y']) / 2
-        sho_mx = (ls['x'] + rs['x']) / 2
-        sho_my = (ls['y'] + rs['y']) / 2
-        trunk_ang = float(np.degrees(np.arctan2(
-            sho_mx - hip_mx, hip_my - sho_my)))
-        trunk_angs.append(trunk_ang)
+    def rotation_series(p1x, p1z, p2x, p2z, p1_ok, p2_ok):
+        raw_angs, valid = [], []
+        for i in range(n):
+            dx, dz = p2x[i] - p1x[i], p2z[i] - p1z[i]
+            mag = (dx*dx + dz*dz) ** 0.5
+            ok = bool(p1_ok[i] and p2_ok[i] and mag >= MIN_ROT_VEC_MAG)
+            if ok:
+                ang = float(np.degrees(np.arctan2(dz, dx)))
+            else:
+                ang = raw_angs[-1] if raw_angs else float(np.degrees(np.arctan2(dz, dx)))
+            raw_angs.append(ang)
+            valid.append(ok)
+        return filter_angle_series(raw_angs, valid, max_rot_jump)
+
+    hip_angs, hip_ang_ok = rotation_series(lhx, lhz, rhx, rhz, lh_ok, rh_ok)
+    sho_angs, sho_ang_ok = rotation_series(lsx, lsz, rsx, rsz, ls_ok, rs_ok)
+    for i in range(n):
+        if not hip_ang_ok[i] or not sho_ang_ok[i]:
+            low_conf[i] = True
+
+    # Unwrap before smoothing so a rotation that crosses the +/-180 deg seam
+    # (common across a full delivery) doesn't read as a sudden ~360 deg jump.
+    hip_angs = np.degrees(np.unwrap(np.deg2rad(hip_angs))).tolist()
+    sho_angs = np.degrees(np.unwrap(np.deg2rad(sho_angs))).tolist()
+
+    # ── Elbow angle, trunk tilt (image-plane geometry, x-y) ────────────────
+    # The 3-point elbow angle itself is well-conditioned, but its *direction*
+    # becomes noise if either the upper-arm or forearm projects to a near-zero
+    # 2D vector (forearm pointing straight at/away from the camera). Hold the
+    # previous angle in that case.
+    elbow_angs, elbow_ok, trunk_angs = [], [], []
+    for i in range(n):
+        ux, uy = tex[i] - tsx[i], tey[i] - tsy[i]
+        fx, fy = twx[i] - tex[i], twy[i] - tey[i]
+        umag, fmag = (ux*ux+uy*uy) ** 0.5, (fx*fx+fy*fy) ** 0.5
+        ok = bool(ts_ok[i] and te_ok[i] and tw_ok[i]
+                  and umag >= MIN_LIMB_VEC_MAG and fmag >= MIN_LIMB_VEC_MAG)
+        ang = angle_3pt(tsx[i], tsy[i], tex[i], tey[i], twx[i], twy[i])
+        if not ok and elbow_angs:
+            ang = elbow_angs[-1]
+        elbow_angs.append(ang)
+        elbow_ok.append(ok)
+        if not ok:
+            low_conf[i] = True
+
+        hip_mx, hip_my = (lhx[i] + rhx[i]) / 2, (lhy[i] + rhy[i]) / 2
+        sho_mx, sho_my = (lsx[i] + rsx[i]) / 2, (lsy[i] + rsy[i]) / 2
+        trunk_angs.append(float(np.degrees(np.arctan2(sho_mx - hip_mx, hip_my - sho_my))))
 
     hip_s   = smooth(hip_angs,   window=9)
     sho_s   = smooth(sho_angs,   window=9)
-    arm_s   = smooth(arm_angs,   window=5)
+    elbow_s = smooth(elbow_angs, window=7)
     trunk_s = smooth(trunk_angs, window=9)
-    arm_vel  = angular_velocity(arm_s, fps, window=7)
-    hip_vel  = angular_velocity(hip_s, fps, window=9)
+    hip_vel   = angular_velocity(hip_s, fps, window=9)
     chest_vel = angular_velocity(sho_s, fps, window=9)
+    # Arm speed = elbow extension/flexion rate. Unlike the angle of the
+    # shoulder->wrist vector, this doesn't blow up under foreshortening: the
+    # 3-point angle is bounded to [0, 180] deg, so its derivative can't sweep
+    # through a near-360 deg discontinuity the way a 2D vector angle can.
+    arm_vel = angular_velocity(elbow_s, fps, window=7)
 
     # Per-frame metrics
     for i, rec in enumerate(raw):
-        lms = rec['landmarks']
-        hss = hip_s[i] - sho_s[i]
-        elbow_h = 0.0
-        if ts_name in lms and te_name in lms:
-            elbow_h = round((lms[ts_name]['y'] - lms[te_name]['y']) * 100, 2)
+        # Hip-shoulder separation is the *short* angular distance between the
+        # two lines, wrapped to [-180, 180] — after unwrapping, hip_s/sho_s
+        # can differ by more than 180 deg even though the true separation
+        # (the X-factor) never exceeds that.
+        hss = ((hip_s[i] - sho_s[i] + 180) % 360) - 180
+        elbow_h = round(float(tsy[i] - tey[i]) * 100, 2)
+        # Wrap rotation angles back to (-180, 180] for display, now that the
+        # unwrapped series has done its job for hss/velocity above.
+        hip_disp = ((hip_s[i] + 180) % 360) - 180
+        sho_disp = ((sho_s[i] + 180) % 360) - 180
 
         rec['metrics'] = {
-            'hip_rotation':        round(hip_s[i],       2),
-            'shoulder_rotation':   round(sho_s[i],       2),
-            'hip_shoulder_sep':    round(abs(hss),        2),
-            'elbow_angle':         round(elbow_angs[i],  2),
-            'elbow_height_pct':    elbow_h,
-            'hip_rotation_speed':  round(hip_vel[i],     2),
-            'chest_rotation_speed': round(chest_vel[i],  2),
-            'arm_speed':           round(arm_vel[i],     2),
-            'trunk_tilt':          round(trunk_s[i],     2),
+            'hip_rotation':         round(hip_disp,       2),
+            'shoulder_rotation':    round(sho_disp,       2),
+            'hip_shoulder_sep':     round(abs(hss),        2),
+            'elbow_angle':          round(elbow_s[i],     2),
+            'elbow_height_pct':     elbow_h,
+            'hip_rotation_speed':   round(hip_vel[i],     2),
+            'chest_rotation_speed': round(chest_vel[i],   2),
+            'arm_speed':            round(arm_vel[i],     2),
+            'trunk_tilt':           round(trunk_s[i],     2),
+            'low_confidence':       bool(low_conf[i]),
         }
 
     # Phases
@@ -454,9 +538,27 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     mer_f      = phases.get('acceleration', (0, 0))[0]
     fs_f       = phases.get('foot_strike',  (0, 0))[0]
 
-    arm_peak_f   = int(np.argmax(arm_speeds))
-    hip_peak_f   = int(np.argmax(hip_speeds))
-    chest_peak_f = int(np.argmax(chest_speeds))
+    def best_peak(values):
+        """argmax restricted to high-confidence frames when any exist;
+        otherwise fall back to all frames and flag the result."""
+        hi = [i for i in range(n) if not low_conf[i]]
+        if hi:
+            idx = max(hi, key=lambda i: values[i])
+            return idx, False
+        return int(np.argmax(values)), True
+
+    arm_peak_f,   arm_peak_lc   = best_peak(arm_speeds)
+    hip_peak_f,   hip_peak_lc   = best_peak(hip_speeds)
+    chest_peak_f, chest_peak_lc = best_peak(chest_speeds)
+    hss_peak_f,   hss_peak_lc   = best_peak(hss_vals)
+
+    # Per-phase tracking confidence — surfaces *where* in the delivery the
+    # pose tracking was/wasn't trustworthy, since an overall percentage can
+    # hide a phase (e.g. acceleration/release) that's entirely low-confidence.
+    phase_confidence = {}
+    for name, (s, e) in phases.items():
+        seg = low_conf[s:e + 1]
+        phase_confidence[name] = round(100.0 * (1 - sum(seg) / len(seg)), 1) if seg else 100.0
 
     summary = {
         'fps': round(fps, 2),
@@ -465,18 +567,26 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
         'throw_hand': throw_hand,
         'frame_width': W,
         'frame_height': H,
+        'tracking_quality': round(100.0 * (1 - sum(low_conf) / n), 1),
+        'phase_confidence': phase_confidence,
         'phases': {k: {'start': int(v[0]), 'end': int(v[1])} for k, v in phases.items()},
         'peak': {
-            'max_arm_speed':          round(max(arm_speeds), 1),
+            'max_arm_speed':          round(arm_speeds[arm_peak_f], 1),
             'max_arm_speed_frame':    arm_peak_f,
-            'max_hip_rotation_speed':   round(max(hip_speeds), 1),
+            'max_arm_speed_low_confidence': arm_peak_lc,
+            'max_hip_rotation_speed':   round(hip_speeds[hip_peak_f], 1),
             'max_hip_rotation_speed_frame': hip_peak_f,
-            'max_chest_rotation_speed':   round(max(chest_speeds), 1),
+            'max_hip_rotation_speed_low_confidence': hip_peak_lc,
+            'max_chest_rotation_speed':   round(chest_speeds[chest_peak_f], 1),
             'max_chest_rotation_speed_frame': chest_peak_f,
-            'max_hip_shoulder_sep':   round(max(hss_vals), 1),
-            'max_hss_frame':          int(np.argmax(hss_vals)),
+            'max_chest_rotation_speed_low_confidence': chest_peak_lc,
+            'max_hip_shoulder_sep':   round(hss_vals[hss_peak_f], 1),
+            'max_hss_frame':          hss_peak_f,
+            'max_hss_low_confidence': hss_peak_lc,
             'arm_speed_at_release':   round(arm_speeds[release_f], 1) if release_f < n else 0,
+            'arm_speed_at_release_low_confidence': bool(low_conf[release_f]) if release_f < n else False,
             'hss_at_foot_strike':     round(hss_vals[fs_f], 1),
+            'hss_at_foot_strike_low_confidence': bool(low_conf[fs_f]),
         },
         'key_frames': {
             'foot_strike':  int(fs_f),
