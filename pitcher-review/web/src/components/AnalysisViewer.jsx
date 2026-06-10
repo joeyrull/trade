@@ -3,8 +3,9 @@ import MetricsChart from './MetricsChart';
 import PhaseTimeline from './PhaseTimeline';
 import SummaryReport from './SummaryReport';
 import PoseOverlay from './PoseOverlay';
+import LabReport from './LabReport';
 
-const TABS = ['Overview', 'Charts', 'Phases', 'Annotated Video'];
+const TABS = ['Overview', 'Charts', 'Phases', 'Lab Report', 'Annotated Video'];
 
 export default function AnalysisViewer({ result }) {
   const { annotatedVideo, metrics } = result;
@@ -88,6 +89,9 @@ export default function AnalysisViewer({ result }) {
         )}
         {tab === 'Phases' && (
           <PhaseDetail summary={summary} frames={frames} onSeek={seekToFrame} />
+        )}
+        {tab === 'Lab Report' && (
+          <LabReport summary={summary} frames={frames} currentFrame={currentFrame} onSeek={seekToFrame} />
         )}
         {tab === 'Annotated Video' && (
           <div className="annotated-tab">

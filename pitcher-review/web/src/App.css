@@ -580,6 +580,95 @@ body {
 .phase-release        { background: #9900cc; }
 .phase-follow_through { background: #5555bb; }
 
+/* ── Lab Report tab ────────────────────────────────────────────────────────── */
+.lab-report {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.lab-report-intro {
+  font-size: 13px;
+  color: #8a95a8;
+  line-height: 1.6;
+  max-width: 760px;
+}
+.lab-metric-card {
+  background: #151820;
+  border: 1px solid #252a35;
+  border-radius: 10px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.lab-metric-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.lab-metric-title { font-size: 17px; color: #fff; margin: 0; }
+.lab-metric-headline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.lab-headline-label { font-size: 12px; color: #778; }
+.lab-headline-value { font-size: 20px; font-weight: 700; color: #fff; }
+.lab-grade-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #fff;
+}
+.lab-metric-definition {
+  font-size: 13px;
+  color: #aab2c4;
+  line-height: 1.6;
+  margin: 0;
+  max-width: 820px;
+}
+
+/* Gray "lab" panel for the trendline chart, contrasting with the dark UI */
+.lab-chart-panel {
+  background: #e8eaed;
+  border: 1px solid #d0d3d9;
+  border-radius: 8px;
+  padding: 16px 16px 4px;
+}
+
+.lab-drills {
+  background: #10131a;
+  border: 1px solid #232838;
+  border-radius: 8px;
+  padding: 14px 18px;
+}
+.lab-drills h4 {
+  font-size: 13px;
+  color: #8a95a8;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.lab-drills ul {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lab-drills li {
+  font-size: 13px;
+  color: #ccd2de;
+  line-height: 1.5;
+}
+
 /* ── Annotated video tab ───────────────────────────────────────────────────── */
 .annotated-tab {
   display: flex;
