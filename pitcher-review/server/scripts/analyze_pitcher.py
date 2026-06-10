@@ -803,7 +803,14 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
             blurred = cv2.GaussianBlur(bgr, (BG_BLUR_KSIZE, BG_BLUR_KSIZE), 0)
             bgr = (bgr.astype(np.float32) * alpha + blurred.astype(np.float32) * (1 - alpha)).astype(np.uint8)
 
-        if rec['_pose_ok'] and rec['_lm_list']:
+        # Only draw the skeleton/elbow-angle overlay when the robust tracker
+        # trusts this frame's landmarks. MediaPipe can keep returning *some*
+        # pose for a frame even after it has lost the pitcher (e.g. locked
+        # onto the wrong region during a fast, blurry release), and drawing
+        # that raw pose produces a skeleton that visibly drifts away from the
+        # pitcher's actual position. The HUD's low-confidence badge already
+        # communicates "tracking lost" for these frames.
+        if rec['_pose_ok'] and rec['_lm_list'] and not rec['metrics']['low_confidence']:
             draw_skeleton(bgr, rec['_lm_list'], throw_idx, lead_idx, W, H)
             if te_name in rec['landmarks']:
                 hud_scale = max(1.0, W / 960.0)

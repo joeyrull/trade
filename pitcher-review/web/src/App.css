@@ -314,6 +314,10 @@ body {
 .metric-label { color: #7a8599; }
 .metric-val { font-weight: 600; font-variant-numeric: tabular-nums; }
 
+.metric-row.frozen { opacity: 0.55; }
+.metric-row.frozen .metric-label { color: #4a5268; }
+.frozen-tag { font-size: 10px; font-weight: 400; font-style: italic; color: #5a6378; }
+
 .speed-bars {
   margin-top: 14px;
   display: flex;

@@ -155,14 +155,17 @@ function LiveMetrics({ frame, summary }) {
       <p className="frame-label">Frame {frame.frame} · t={frame.time.toFixed(3)}s</p>
 
       {metricRows.map(({ label, val, unit, good, neutral }) => {
-        const color = neutral ? '#fff'
+        const frozen = m.low_confidence;
+        const color = frozen ? '#7a8599'
+          : neutral ? '#fff'
           : good ? (good(val) ? '#4dff88' : '#ff8844')
           : '#fff';
         return (
-          <div key={label} className="metric-row">
+          <div key={label} className={`metric-row ${frozen ? 'frozen' : ''}`}>
             <span className="metric-label">{label}</span>
             <span className="metric-val" style={{ color }}>
               {typeof val === 'number' ? val.toFixed(1) : '—'}{unit}
+              {frozen && <span className="frozen-tag"> (held)</span>}
             </span>
           </div>
         );
