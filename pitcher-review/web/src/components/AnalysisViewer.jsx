@@ -4,6 +4,7 @@ import PhaseTimeline from './PhaseTimeline';
 import SummaryReport from './SummaryReport';
 import PoseOverlay from './PoseOverlay';
 import LabReport from './LabReport';
+import VideoControls from './VideoControls';
 
 const TABS = ['Overview', 'Charts', 'Phases', 'Lab Report', 'Annotated Video'];
 
@@ -14,6 +15,7 @@ export default function AnalysisViewer({ result }) {
   const [tab, setTab] = useState('Overview');
   const [currentFrame, setCurrentFrame] = useState(0);
   const videoRef = useRef(null);
+  const annotatedVideoRef = useRef(null);
 
   // Sync video time → frame index
   useEffect(() => {
@@ -54,6 +56,7 @@ export default function AnalysisViewer({ result }) {
               className="main-video"
             />
           </div>
+          <VideoControls videoRef={videoRef} fps={summary.fps} />
           <PhaseTimeline
             summary={summary}
             frames={frames}
@@ -98,7 +101,8 @@ export default function AnalysisViewer({ result }) {
             <p className="annotated-note">
               The annotated video shows the MediaPipe pose skeleton, live metrics HUD, and phase labels overlaid on every frame.
             </p>
-            <video src={annotatedVideo} controls playsInline className="annotated-video-large" />
+            <video ref={annotatedVideoRef} src={annotatedVideo} controls playsInline className="annotated-video-large" />
+            <VideoControls videoRef={annotatedVideoRef} fps={summary.fps} />
             <a className="btn-secondary" href={annotatedVideo} download="pitcher_annotated.mp4">
               Download Annotated Video
             </a>

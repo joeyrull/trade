@@ -51,7 +51,7 @@ function LowConfBadge({ show }) {
   );
 }
 
-function TrackingQualityBanner({ quality, phaseConfidence }) {
+function TrackingQualityBanner({ quality, phaseConfidence, autoZoom }) {
   if (quality == null) return null;
   const level = quality >= 80 ? 'good' : quality >= 50 ? 'warn' : 'bad';
   const lowPhases = Object.entries(phaseConfidence || {})
@@ -61,6 +61,12 @@ function TrackingQualityBanner({ quality, phaseConfidence }) {
   return (
     <div className={`tracking-banner tracking-${level}`}>
       <strong>Pose Tracking Confidence: {quality.toFixed(0)}%</strong>
+      {autoZoom?.applied && (
+        <p className="tracking-banner-note">
+          Auto-zoom: cropped to the ~{autoZoom.frame_pct.toFixed(0)}% of the frame containing the pitcher
+          to improve tracking detail.
+        </p>
+      )}
       {level !== 'good' && (
         <p className="tracking-banner-note">
           {level === 'bad'
@@ -79,7 +85,7 @@ function TrackingQualityBanner({ quality, phaseConfidence }) {
 
 export default function SummaryReport({ summary, frames }) {
   const { peak, key_frames, phases, fps, duration_s, throw_hand, sequencing,
-          tracking_quality, phase_confidence } = summary;
+          tracking_quality, phase_confidence, auto_zoom } = summary;
 
   if (!peak) return <p style={{ color: '#888', padding: 24 }}>No summary data available.</p>;
 
@@ -104,7 +110,7 @@ export default function SummaryReport({ summary, frames }) {
 
   return (
     <div className="summary-report">
-      <TrackingQualityBanner quality={tracking_quality} phaseConfidence={phase_confidence} />
+      <TrackingQualityBanner quality={tracking_quality} phaseConfidence={phase_confidence} autoZoom={auto_zoom} />
 
       <div className="summary-hero">
         <div className="hero-stat">

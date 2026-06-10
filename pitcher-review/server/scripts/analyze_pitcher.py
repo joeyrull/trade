@@ -10,14 +10,32 @@ Uses MediaPipe Tasks API (mediapipe >= 0.10).
 import argparse
 import json
 import os
+import shutil
 import sys
 import urllib.request
+from types import SimpleNamespace
 import cv2
 import mediapipe as mp
 import numpy as np
 from scipy.signal import savgol_filter
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
+
+
+def find_ffmpeg():
+    """Locate an ffmpeg binary: prefer one on PATH, otherwise fall back to
+    the portable static build bundled by the imageio-ffmpeg package (so the
+    H.264 re-encode works even on machines without a system ffmpeg, e.g. a
+    fresh macOS install)."""
+    path = shutil.which('ffmpeg')
+    if path:
+        return path
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
 
 # ── Model download ────────────────────────────────────────────────────────────
 MODEL_DIR  = os.path.join(os.path.dirname(__file__), 'models')
@@ -86,8 +104,17 @@ MIN_LIMB_VEC_MAG = 0.04  # min |upper-arm or forearm| (x-y plane) to trust the e
 MIN_MASK_CONF    = 0.4   # min person-segmentation confidence to trust a landmark there
 
 # ── Background blur ──────────────────────────────────────────────────────────
-MASK_DOWNSCALE_W = 160  # width (px) to downsample segmentation masks to before storing
+MASK_DOWNSCALE_W = 320  # width (px) to downsample segmentation masks to before storing
 BG_BLUR_KSIZE    = 45   # Gaussian blur kernel size (odd) applied to background pixels
+
+# ── Pitcher framing / zoom ───────────────────────────────────────────────────
+# Wide or cluttered shots (e.g. a garage with the pitcher small in frame) hurt
+# both pose-detection accuracy and the precision of every downstream angle
+# measurement. A quick first pass locates the pitcher across the whole clip so
+# the main pass can crop in on them, effectively raising their resolution.
+SCAN_SAMPLES   = 24   # number of frames sampled in the first pass to locate the pitcher
+ROI_PAD        = 0.25 # margin added around the scanned bounding box, as a fraction of its size
+ROI_MIN_SPAN   = 0.92 # don't bother cropping if the ROI would already cover ~the whole frame
 
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
@@ -371,8 +398,71 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
 
     emit('extracting', 0, max(total, 1))
 
-    # Build PoseLandmarker in VIDEO mode
     base_opts = mp_python.BaseOptions(model_asset_path=MODEL_FILE)
+
+    # ── Pass 0: locate the pitcher ─────────────────────────────────────────
+    # Sample a handful of frames across the whole clip to find a bounding box
+    # around the pitcher, then crop the main pass to that box (with margin).
+    # This raises the pitcher's effective resolution and excludes background
+    # clutter — the single biggest lever for wide/cluttered shots (e.g. a
+    # garage) where the pitcher is small in frame.
+    scan_opts = mp_vision.PoseLandmarkerOptions(
+        base_options=base_opts,
+        running_mode=mp_vision.RunningMode.IMAGE,
+        num_poses=1,
+        min_pose_detection_confidence=0.5,
+        min_pose_presence_confidence=0.5,
+    )
+    scanner = mp_vision.PoseLandmarker.create_from_options(scan_opts)
+
+    sample_step = max(1, total // SCAN_SAMPLES) if total > 0 else max(1, int(fps))
+    bbox = None
+    i = 0
+    while True:
+        ret, bgr = cap.read()
+        if not ret:
+            break
+        if i % sample_step == 0:
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            scan_result = scanner.detect(mp_img)
+            if scan_result.pose_landmarks:
+                pts = [(lm.x, lm.y) for lm in scan_result.pose_landmarks[0]
+                       if getattr(lm, 'visibility', 1.0) > 0.3]
+                if pts:
+                    xs, ys = zip(*pts)
+                    fb = (min(xs), min(ys), max(xs), max(ys))
+                    bbox = fb if bbox is None else (
+                        min(bbox[0], fb[0]), min(bbox[1], fb[1]),
+                        max(bbox[2], fb[2]), max(bbox[3], fb[3]),
+                    )
+        i += 1
+    scanner.close()
+    cap.release()
+    cap = cv2.VideoCapture(video_path)
+
+    roi_norm = (0.0, 0.0, 1.0, 1.0)
+    if bbox is not None:
+        bx0, by0, bx1, by1 = bbox
+        bw, bh = max(bx1 - bx0, 1e-6), max(by1 - by0, 1e-6)
+        cand = (
+            max(0.0, bx0 - bw * ROI_PAD),
+            max(0.0, by0 - bh * ROI_PAD),
+            min(1.0, bx1 + bw * ROI_PAD),
+            min(1.0, by1 + bh * ROI_PAD),
+        )
+        if (cand[2] - cand[0]) < ROI_MIN_SPAN or (cand[3] - cand[1]) < ROI_MIN_SPAN:
+            roi_norm = cand
+
+    crop_x0, crop_y0 = int(roi_norm[0] * W), int(roi_norm[1] * H)
+    crop_x1 = max(crop_x0 + 2, int(roi_norm[2] * W))
+    crop_y1 = max(crop_y0 + 2, int(roi_norm[3] * H))
+    crop_w, crop_h = crop_x1 - crop_x0, crop_y1 - crop_y0
+    cropped = (crop_x0, crop_y0, crop_x1, crop_y1) != (0, 0, W, H)
+    roi_x, roi_y = crop_x0 / W, crop_y0 / H
+    roi_w, roi_h = crop_w / W, crop_h / H
+
+    # Build PoseLandmarker in VIDEO mode for the main pass
     opts = mp_vision.PoseLandmarkerOptions(
         base_options=base_opts,
         running_mode=mp_vision.RunningMode.VIDEO,
@@ -393,16 +483,38 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
         if not ret:
             break
 
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        crop = bgr[crop_y0:crop_y1, crop_x0:crop_x1] if cropped else bgr
+        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
         mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         ts_ms  = int(frame_num * 1000 / fps)
         result = landmarker.detect_for_video(mp_img, ts_ms)
 
-        lm_list = result.pose_landmarks[0] if result.pose_landmarks else None
+        lm_list = None
+        if result.pose_landmarks:
+            if cropped:
+                # Map landmarks from crop-relative back to full-frame
+                # normalized coordinates so every downstream calculation
+                # (which assumes full-frame coordinates) is unaffected.
+                lm_list = [
+                    SimpleNamespace(
+                        x=roi_x + lm.x * roi_w,
+                        y=roi_y + lm.y * roi_h,
+                        z=lm.z * roi_w,
+                        visibility=getattr(lm, 'visibility', 1.0),
+                    )
+                    for lm in result.pose_landmarks[0]
+                ]
+            else:
+                lm_list = result.pose_landmarks[0]
 
         mask_small = None
         if result.segmentation_masks:
             mask = result.segmentation_masks[0].numpy_view()
+            if cropped:
+                full_mask = np.zeros((H, W), dtype=np.float32)
+                mask_resized = cv2.resize(mask, (crop_w, crop_h), interpolation=cv2.INTER_LINEAR)
+                full_mask[crop_y0:crop_y1, crop_x0:crop_x1] = mask_resized
+                mask = full_mask
             mh = max(1, round(MASK_DOWNSCALE_W * mask.shape[0] / mask.shape[1]))
             mask_small = cv2.resize(mask, (MASK_DOWNSCALE_W, mh), interpolation=cv2.INTER_AREA)
             mask_small = (mask_small * 255).astype(np.uint8)
@@ -613,6 +725,10 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
         'frame_width': W,
         'frame_height': H,
         'tracking_quality': round(100.0 * (1 - sum(low_conf) / n), 1),
+        'auto_zoom': {
+            'applied': cropped,
+            'frame_pct': round(100.0 * roi_w * roi_h, 1),
+        },
         'phase_confidence': phase_confidence,
         'phases': {k: {'start': int(v[0]), 'end': int(v[1])} for k, v in phases.items()},
         'peak': {
@@ -691,13 +807,19 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
     cap2.release()
     writer.release()
 
-    # Re-encode to H.264 for browser
+    # Re-encode to H.264 for browser playback. The raw OpenCV output uses the
+    # 'mp4v' (MPEG-4 Part 2) codec, which most browsers can't play — without
+    # a successful re-encode here, the annotated video silently fails to load.
     ann_path = os.path.join(output_dir, 'annotated.mp4')
-    ret_code = os.system(
-        f'ffmpeg -i "{raw_out}" -vcodec libx264 -crf 18 -preset medium '
-        f'-pix_fmt yuv420p -movflags +faststart -y "{ann_path}" 2>/dev/null'
-    )
-    if ret_code == 0 and os.path.exists(ann_path) and os.path.getsize(ann_path) > 1024:
+    ffmpeg_bin = find_ffmpeg()
+    encoded = False
+    if ffmpeg_bin:
+        ret_code = os.system(
+            f'"{ffmpeg_bin}" -i "{raw_out}" -vcodec libx264 -crf 18 -preset medium '
+            f'-pix_fmt yuv420p -movflags +faststart -y "{ann_path}" 2>/dev/null'
+        )
+        encoded = ret_code == 0 and os.path.exists(ann_path) and os.path.getsize(ann_path) > 1024
+    if encoded:
         os.remove(raw_out)
     else:
         os.rename(raw_out, ann_path)
