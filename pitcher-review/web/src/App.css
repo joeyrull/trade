@@ -646,13 +646,14 @@ body {
   box-shadow: 0 0 4px rgba(255,255,255,0.8);
 }
 .pillar-bar-zones {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
   font-size: 10px;
   color: #556;
 }
-.pillar-bar-zones span:nth-child(2) { transform: translateX(-50%); }
-.pillar-bar-zones span:nth-child(3) { margin-left: auto; }
+.pillar-bar-zones span:nth-child(1) { text-align: left; }
+.pillar-bar-zones span:nth-child(2) { text-align: center; }
+.pillar-bar-zones span:nth-child(3) { text-align: right; }
 
 .lab-metric-card {
   background: #151820;
