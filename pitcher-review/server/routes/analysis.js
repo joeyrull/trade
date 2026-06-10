@@ -77,6 +77,11 @@ function runJob(job) {
 
   proc.stderr.on('data', (data) => {
     const text = data.toString();
+    // Surface non-fatal warnings (e.g. a failed H.264 re-encode that leaves an
+    // unplayable mpeg4 file) to the server console so they aren't lost.
+    if (text.includes('[warn]')) {
+      console.warn(`[analysis ${job.id}] ${text.trim()}`);
+    }
     // Some MediaPipe logs go to stderr - only flag actual errors, including
     // native CHECK-failure crashes (abseil "F..." fatal logs / "Check failed")
     // which don't say "Error" but precede a SIGABRT.

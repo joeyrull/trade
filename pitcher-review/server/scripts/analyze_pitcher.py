@@ -836,12 +836,32 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
     ann_path = os.path.join(output_dir, 'annotated.mp4')
     ffmpeg_bin = find_ffmpeg()
     encoded = False
-    if ffmpeg_bin:
-        ret_code = os.system(
-            f'"{ffmpeg_bin}" -i "{raw_out}" -vcodec libx264 -crf 18 -preset medium '
-            f'-pix_fmt yuv420p -movflags +faststart -y "{ann_path}" 2>/dev/null'
-        )
-        encoded = ret_code == 0 and os.path.exists(ann_path) and os.path.getsize(ann_path) > 1024
+    if not ffmpeg_bin:
+        print('[warn] No ffmpeg binary found (system PATH or imageio-ffmpeg) — '
+              'annotated video will stay mp4v/MPEG-4 and may not play in the browser. '
+              'Fix: pip install imageio-ffmpeg', file=sys.stderr)
+    else:
+        import subprocess
+        cmd = [ffmpeg_bin, '-i', raw_out, '-vcodec', 'libx264', '-crf', '18',
+               '-preset', 'medium', '-pix_fmt', 'yuv420p',
+               '-movflags', '+faststart', '-y', ann_path]
+        try:
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, timeout=300)
+            encoded = (proc.returncode == 0 and os.path.exists(ann_path)
+                       and os.path.getsize(ann_path) > 1024)
+            if not encoded:
+                # Surface the real reason (last few lines of ffmpeg stderr) so a
+                # failed H.264 re-encode isn't silent — this is what leaves the
+                # browser with an unplayable mpeg4 file.
+                tail = proc.stderr.decode('utf-8', 'replace').strip().splitlines()[-8:]
+                print('[warn] ffmpeg H.264 re-encode failed (rc=%d) — annotated '
+                      'video will stay mp4v and may not play in the browser:\n  %s'
+                      % (proc.returncode, '\n  '.join(tail)), file=sys.stderr)
+        except Exception as e:
+            print('[warn] ffmpeg H.264 re-encode raised %r — annotated video '
+                  'will stay mp4v and may not play in the browser.' % e,
+                  file=sys.stderr)
     if encoded:
         os.remove(raw_out)
     else:
