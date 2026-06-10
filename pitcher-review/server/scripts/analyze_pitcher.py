@@ -84,6 +84,10 @@ MAX_POS_JUMP     = 0.15  # max plausible frame-to-frame landmark move (normalize
 MIN_ROT_VEC_MAG  = 0.035 # min |hip/shoulder line vector| (x-z plane) to trust its angle
 MIN_LIMB_VEC_MAG = 0.04  # min |upper-arm or forearm| (x-y plane) to trust the elbow angle
 
+# ── Background blur ──────────────────────────────────────────────────────────
+MASK_DOWNSCALE_W = 80   # width (px) to downsample segmentation masks to before storing
+BG_BLUR_KSIZE    = 45   # Gaussian blur kernel size (odd) applied to background pixels
+
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
 
@@ -313,7 +317,7 @@ def draw_hud(frame, f_data, phase_name):
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
-def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
+def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, blur_background=True):
     os.makedirs(output_dir, exist_ok=True)
     ensure_model()
 
@@ -344,6 +348,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
         min_pose_detection_confidence=0.5,
         min_pose_presence_confidence=0.5,
         min_tracking_confidence=0.5,
+        output_segmentation_masks=blur_background,
     )
     landmarker = mp_vision.PoseLandmarker.create_from_options(opts)
 
@@ -363,11 +368,19 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
 
         lm_list = result.pose_landmarks[0] if result.pose_landmarks else None
 
+        mask_small = None
+        if blur_background and result.segmentation_masks:
+            mask = result.segmentation_masks[0].numpy_view()
+            mh = max(1, round(MASK_DOWNSCALE_W * mask.shape[0] / mask.shape[1]))
+            mask_small = cv2.resize(mask, (MASK_DOWNSCALE_W, mh), interpolation=cv2.INTER_AREA)
+            mask_small = (mask_small * 255).astype(np.uint8)
+
         rec = {
             'frame': frame_num,
             'time':  round(frame_num / fps, 4),
             '_pose_ok':        lm_list is not None,
             '_lm_list':        lm_list,
+            '_mask_small':     mask_small,
             '_lead_ankle_y':   0.85,
             '_throw_elbow_y':  0.4,
             '_wrist_speed':    0.0,
@@ -619,6 +632,13 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
         if not ret or i >= n:
             break
         rec = raw[i]
+
+        if blur_background and rec['_mask_small'] is not None:
+            mask_full = cv2.resize(rec['_mask_small'], (W, H), interpolation=cv2.INTER_LINEAR)
+            alpha = (mask_full.astype(np.float32) / 255.0)[..., None]
+            blurred = cv2.GaussianBlur(bgr, (BG_BLUR_KSIZE, BG_BLUR_KSIZE), 0)
+            bgr = (bgr.astype(np.float32) * alpha + blurred.astype(np.float32) * (1 - alpha)).astype(np.uint8)
+
         if rec['_pose_ok'] and rec['_lm_list']:
             draw_skeleton(bgr, rec['_lm_list'], throw_idx, lead_idx, W, H)
             if te_name in rec['landmarks']:
@@ -673,6 +693,8 @@ def main():
     parser.add_argument('--output-dir', default='./pitcher_analysis')
     parser.add_argument('--throw-hand', choices=['left', 'right'], default='left')
     parser.add_argument('--progress',   action='store_true')
+    parser.add_argument('--no-blur-background', action='store_false', dest='blur_background',
+                         default=True, help='Disable automatic background blur in the annotated video')
     args = parser.parse_args()
 
     def cb(d):
@@ -680,7 +702,7 @@ def main():
             print(json.dumps(d), flush=True)
 
     try:
-        r = analyze_video(args.video, args.output_dir, args.throw_hand, cb)
+        r = analyze_video(args.video, args.output_dir, args.throw_hand, cb, args.blur_background)
         print(json.dumps({'status': 'done', **r}), flush=True)
     except Exception as e:
         import traceback
