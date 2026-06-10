@@ -18,6 +18,7 @@ export const PILLARS = [
         avg: 250,
         good: 500,
         getValue: (summary) => summary.peak?.max_hip_rotation_speed,
+        getLowConfidence: (summary) => summary.peak?.max_hip_rotation_speed_low_confidence,
       },
     ],
   },
@@ -31,6 +32,7 @@ export const PILLARS = [
         avg: 350,
         good: 700,
         getValue: (summary) => summary.peak?.max_chest_rotation_speed,
+        getLowConfidence: (summary) => summary.peak?.max_chest_rotation_speed_low_confidence,
       },
       {
         label: 'Hip-Shoulder Separation',
@@ -38,6 +40,7 @@ export const PILLARS = [
         avg: 12,
         good: 25,
         getValue: (summary) => summary.peak?.max_hip_shoulder_sep,
+        getLowConfidence: (summary) => summary.peak?.max_hss_low_confidence,
       },
       {
         label: 'Hip → Arm Timing',
@@ -46,6 +49,10 @@ export const PILLARS = [
         good: 120,
         lowerIsBetter: true,
         getValue: (summary) => summary.sequencing?.hip_to_arm_ms,
+        getLowConfidence: (summary) =>
+          summary.peak?.max_hip_rotation_speed_low_confidence ||
+          summary.peak?.max_chest_rotation_speed_low_confidence ||
+          summary.peak?.max_arm_speed_low_confidence,
       },
     ],
   },
@@ -59,6 +66,7 @@ export const PILLARS = [
         avg: 400,
         good: 700,
         getValue: (summary) => summary.peak?.max_arm_speed,
+        getLowConfidence: (summary) => summary.peak?.max_arm_speed_low_confidence,
       },
       {
         label: 'Elbow Height at Max External Rotation',
@@ -66,6 +74,8 @@ export const PILLARS = [
         avg: 0,
         good: 5,
         getValue: elbowHeightAtMER,
+        getLowConfidence: (summary, frames) =>
+          frames[summary.key_frames?.max_ext_rot ?? 0]?.metrics?.low_confidence ?? false,
       },
     ],
   },

@@ -1,6 +1,6 @@
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ReferenceLine, ResponsiveContainer,
+  ReferenceLine, ReferenceArea, ResponsiveContainer,
 } from 'recharts';
 import { useMemo } from 'react';
 import { METRICS_LIBRARY } from '../data/metricsLibrary';
@@ -39,6 +39,7 @@ export default function LabReport({ summary, frames, currentFrame, onSeek }) {
       elbowAngle: parseFloat(f.metrics.elbow_angle.toFixed(1)),
       elbowH: parseFloat(f.metrics.elbow_height_pct.toFixed(2)),
       trunkTilt: parseFloat(f.metrics.trunk_tilt.toFixed(2)),
+      lowConf: f.metrics.low_confidence,
     }))
   ), [frames]);
 
@@ -80,21 +81,34 @@ export default function LabReport({ summary, frames, currentFrame, onSeek }) {
 function LabMetricCard({ metric, chartData, refLines, currentT, onSeek }) {
   const { key, label, unit, color, definition, drills, aggregate, grade: gradeCfg } = metric;
 
-  const values = chartData.map(d => d[key]);
-  const maxVal = values.length ? Math.max(...values) : 0;
-  const minVal = values.length ? Math.min(...values) : 0;
+  let maxEntry = null, minEntry = null;
+  for (const d of chartData) {
+    if (maxEntry === null || d[key] > maxEntry[key]) maxEntry = d;
+    if (minEntry === null || d[key] < minEntry[key]) minEntry = d;
+  }
+  const maxVal = maxEntry ? maxEntry[key] : 0;
+  const minVal = minEntry ? minEntry[key] : 0;
 
   let badge = null;
   let headlineLabel = '';
   let headlineValue = '';
+  let lowConfidence = false;
   if (aggregate === 'max') {
     headlineLabel = 'Peak';
     headlineValue = `${maxVal.toFixed(1)}${unit}`;
+    lowConfidence = !!maxEntry?.lowConf;
     if (gradeCfg) badge = grade(maxVal, gradeCfg.good, gradeCfg.avg);
   } else {
     headlineLabel = 'Range';
     headlineValue = `${minVal.toFixed(1)} to ${maxVal.toFixed(1)}${unit}`;
+    lowConfidence = !!(maxEntry?.lowConf || minEntry?.lowConf);
   }
+
+  // For graded metrics, fix the y-axis domain so we can shade "average" and
+  // "elite" benchmark bands behind the trendline (matches the scorecard bars).
+  const yDomain = gradeCfg
+    ? [Math.min(0, minVal), Math.ceil(Math.max(maxVal, gradeCfg.good) * 1.1 / 10) * 10]
+    : ['auto', 'auto'];
 
   return (
     <div className="lab-metric-card">
@@ -102,7 +116,12 @@ function LabMetricCard({ metric, chartData, refLines, currentT, onSeek }) {
         <h3 className="lab-metric-title">{label}</h3>
         <div className="lab-metric-headline">
           <span className="lab-headline-label">{headlineLabel}</span>
-          <span className="lab-headline-value">{headlineValue}</span>
+          <span className="lab-headline-value">
+            {headlineValue}
+            {lowConfidence && (
+              <span className="low-conf-badge" title="Includes a low-confidence pose tracking frame — value may be inaccurate.">⚠</span>
+            )}
+          </span>
           {badge && (
             <span className="lab-grade-badge" style={{ background: badge.color }}>{badge.letter}</span>
           )}
@@ -117,13 +136,21 @@ function LabMetricCard({ metric, chartData, refLines, currentT, onSeek }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#ccc" />
             <XAxis dataKey="t" stroke="#555" tick={{ fontSize: 11 }}
               label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: '#555', fontSize: 11 }} />
-            <YAxis stroke="#555" tick={{ fontSize: 11 }} unit={unit} />
+            <YAxis stroke="#555" tick={{ fontSize: 11 }} unit={unit} domain={yDomain} />
             <Tooltip
               contentStyle={{ background: '#fff', border: '1px solid #ccc', borderRadius: 6, color: '#222' }}
               labelStyle={{ color: '#666' }}
               formatter={val => [`${val.toFixed(1)}${unit}`, label]}
               labelFormatter={t => `t = ${t}s`}
             />
+            {gradeCfg && (
+              <>
+                <ReferenceArea y1={gradeCfg.avg} y2={gradeCfg.good} fill="#9aa015" fillOpacity={0.14}
+                  label={{ value: 'Average range', position: 'insideTopLeft', fill: '#8a8025', fontSize: 10 }} />
+                <ReferenceArea y1={gradeCfg.good} y2={yDomain[1]} fill="#1a8a4a" fillOpacity={0.14}
+                  label={{ value: 'Elite range', position: 'insideTopLeft', fill: '#1a8a4a', fontSize: 10 }} />
+              </>
+            )}
             {refLines.map(r => (
               <ReferenceLine key={r.name} x={r.t} stroke={r.color} strokeDasharray="4 2"
                 label={{ value: r.name.replace('_', ' '), fill: r.color, fontSize: 10, position: 'top' }} />

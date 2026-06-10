@@ -22,7 +22,8 @@ export default function LabScorecard({ summary, frames }) {
       .map(m => {
         const value = m.getValue(summary, frames);
         const score = scoreMetric(m, value);
-        return score == null ? null : { ...m, value, score };
+        const lowConfidence = m.getLowConfidence?.(summary, frames) ?? false;
+        return score == null ? null : { ...m, value, score, lowConfidence };
       })
       .filter(Boolean);
 
@@ -57,7 +58,12 @@ export default function LabScorecard({ summary, frames }) {
                 <div className="pillar-metric" key={m.label}>
                   <div className="pillar-metric-top">
                     <span className="pillar-metric-label">{m.label}</span>
-                    <span className="pillar-metric-value">{m.value.toFixed(1)}{m.unit}</span>
+                    <span className="pillar-metric-value">
+                      {m.value.toFixed(1)}{m.unit}
+                      {m.lowConfidence && (
+                        <span className="low-conf-badge" title="Based on a low-confidence pose tracking frame — value may be inaccurate.">⚠</span>
+                      )}
+                    </span>
                   </div>
                   <div className="pillar-bar-track">
                     <div className="pillar-bar-marker" style={{ left: `${m.score}%` }} />
