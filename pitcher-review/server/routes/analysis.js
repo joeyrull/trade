@@ -77,16 +77,20 @@ function runJob(job) {
 
   proc.stderr.on('data', (data) => {
     const text = data.toString();
-    // Some MediaPipe logs go to stderr - only flag actual errors
-    if (text.includes('Error') || text.includes('Traceback')) {
+    // Some MediaPipe logs go to stderr - only flag actual errors, including
+    // native CHECK-failure crashes (abseil "F..." fatal logs / "Check failed")
+    // which don't say "Error" but precede a SIGABRT.
+    if (text.includes('Error') || text.includes('Traceback') ||
+        text.includes('Check failed') || /^F\d{8}/m.test(text)) {
       job.error = (job.error || '') + text;
     }
   });
 
-  proc.on('close', (code) => {
+  proc.on('close', (code, signal) => {
     if (code !== 0 && job.status !== 'done') {
       job.status = 'error';
-      job.error  = job.error || `Process exited with code ${code}`;
+      job.error  = job.error || `Process exited with code ${code}` +
+        (signal ? ` (signal ${signal})` : '');
     }
   });
 }

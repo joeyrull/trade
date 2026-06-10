@@ -115,6 +115,7 @@ BG_BLUR_KSIZE    = 45   # Gaussian blur kernel size (odd) applied to background 
 SCAN_SAMPLES   = 24   # number of frames sampled in the first pass to locate the pitcher
 ROI_PAD        = 0.25 # margin added around the scanned bounding box, as a fraction of its size
 ROI_MIN_SPAN   = 0.92 # don't bother cropping if the ROI would already cover ~the whole frame
+CROP_ALIGN     = 16   # crop width/height are snapped to a multiple of this many px
 
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
@@ -460,7 +461,19 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
     crop_x0, crop_y0 = int(roi_norm[0] * W), int(roi_norm[1] * H)
     crop_x1 = max(crop_x0 + 2, int(roi_norm[2] * W))
     crop_y1 = max(crop_y0 + 2, int(roi_norm[3] * H))
-    crop_w, crop_h = crop_x1 - crop_x0, crop_y1 - crop_y0
+
+    # Snap the crop to a multiple of CROP_ALIGN px on each axis. MediaPipe's
+    # segmentation-mask output is a float32 ImageFrame internally, and reading
+    # it back via numpy_view() hits a hard CHECK-failure crash (SIGABRT) when
+    # handed an arbitrary, unaligned crop width/height.
+    crop_w = max(CROP_ALIGN, ((crop_x1 - crop_x0) // CROP_ALIGN) * CROP_ALIGN)
+    crop_h = max(CROP_ALIGN, ((crop_y1 - crop_y0) // CROP_ALIGN) * CROP_ALIGN)
+    crop_w = min(crop_w, (W // CROP_ALIGN) * CROP_ALIGN)
+    crop_h = min(crop_h, (H // CROP_ALIGN) * CROP_ALIGN)
+    crop_x0 = min(crop_x0, W - crop_w)
+    crop_y0 = min(crop_y0, H - crop_h)
+    crop_x1, crop_y1 = crop_x0 + crop_w, crop_y0 + crop_h
+
     cropped = (crop_x0, crop_y0, crop_x1, crop_y1) != (0, 0, W, H)
     roi_x, roi_y = crop_x0 / W, crop_y0 / H
     roi_w, roi_h = crop_w / W, crop_h / H
