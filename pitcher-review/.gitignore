@@ -3,4 +3,5 @@ dist/
 server/uploads/
 server/jobs/
 server/scripts/models/
+__pycache__/
 *.env
