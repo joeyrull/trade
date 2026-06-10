@@ -2,8 +2,11 @@ import { PILLARS } from '../data/pillars';
 
 // Maps a raw value onto a 0-100 scale where `avg` ≈ 50 and `good` ≈ 90,
 // extrapolating linearly beyond those anchors and clamping to [0, 100].
-function scoreMetric({ avg, good, lowerIsBetter }, value) {
+function scoreMetric(m, value, summary, frames) {
   if (value == null || Number.isNaN(value)) return null;
+  const override = m.scoreOverride?.(summary, frames, value);
+  if (override != null) return Math.max(0, Math.min(100, override));
+  const { avg, good, lowerIsBetter } = m;
   const span = lowerIsBetter ? (avg - good) : (good - avg);
   const delta = lowerIsBetter ? (avg - value) : (value - avg);
   const pct = 50 + (delta / span) * 40;
@@ -21,9 +24,10 @@ export default function LabScorecard({ summary, frames }) {
     const metrics = pillar.metrics
       .map(m => {
         const value = m.getValue(summary, frames);
-        const score = scoreMetric(m, value);
+        const score = scoreMetric(m, value, summary, frames);
         const lowConfidence = m.getLowConfidence?.(summary, frames) ?? false;
-        return score == null ? null : { ...m, value, score, lowConfidence };
+        const note = m.note?.(summary, frames) ?? null;
+        return score == null ? null : { ...m, value, score, lowConfidence, note };
       })
       .filter(Boolean);
 
@@ -73,6 +77,7 @@ export default function LabScorecard({ summary, frames }) {
                     <span>Avg</span>
                     <span>Elite</span>
                   </div>
+                  {m.note && <p className="pillar-metric-note">{m.note}</p>}
                 </div>
               ))}
             </div>

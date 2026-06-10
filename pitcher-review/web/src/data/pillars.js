@@ -53,6 +53,13 @@ export const PILLARS = [
           summary.peak?.max_hip_rotation_speed_low_confidence ||
           summary.peak?.max_chest_rotation_speed_low_confidence ||
           summary.peak?.max_arm_speed_low_confidence,
+        // Negative timing looks "fast" numerically, but if the kinetic chain
+        // fired out of order (arm before hip/chest), the timing isn't good —
+        // it's backwards. Override the score so it doesn't read as "Elite".
+        scoreOverride: (summary) => summary.sequencing?.proper_order === false ? 15 : null,
+        note: (summary) => summary.sequencing?.proper_order === false
+          ? 'Kinetic chain fired out of order (arm before hips/chest) — timing should not be read as fast.'
+          : null,
       },
     ],
   },

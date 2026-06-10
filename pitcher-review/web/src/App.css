@@ -655,6 +655,12 @@ body {
 .pillar-bar-zones span:nth-child(2) { text-align: center; }
 .pillar-bar-zones span:nth-child(3) { text-align: right; }
 
+.pillar-metric-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: #ff8844;
+}
+
 .lab-metric-card {
   background: #151820;
   border: 1px solid #252a35;
