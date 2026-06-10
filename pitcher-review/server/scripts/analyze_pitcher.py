@@ -83,9 +83,10 @@ MIN_VISIBILITY   = 0.5   # landmark visibility below this is not trusted
 MAX_POS_JUMP     = 0.15  # max plausible frame-to-frame landmark move (normalized coords)
 MIN_ROT_VEC_MAG  = 0.035 # min |hip/shoulder line vector| (x-z plane) to trust its angle
 MIN_LIMB_VEC_MAG = 0.04  # min |upper-arm or forearm| (x-y plane) to trust the elbow angle
+MIN_MASK_CONF    = 0.4   # min person-segmentation confidence to trust a landmark there
 
 # ── Background blur ──────────────────────────────────────────────────────────
-MASK_DOWNSCALE_W = 80   # width (px) to downsample segmentation masks to before storing
+MASK_DOWNSCALE_W = 160  # width (px) to downsample segmentation masks to before storing
 BG_BLUR_KSIZE    = 45   # Gaussian blur kernel size (odd) applied to background pixels
 
 
@@ -118,11 +119,24 @@ def angular_velocity(angles_deg, fps, window=7):
     return vel.tolist()
 
 
-def build_robust_series(raw, name, min_vis=MIN_VISIBILITY, max_jump=MAX_POS_JUMP):
+def mask_confidence(mask_small, x, y):
+    """Sample a downsampled segmentation mask (uint8, 0-255) at normalized
+    image coordinates (x, y), returning person-probability in [0, 1].
+    Returns 1.0 (no opinion) if no mask is available."""
+    if mask_small is None:
+        return 1.0
+    h, w = mask_small.shape
+    mx = min(w - 1, max(0, int(x * w)))
+    my = min(h - 1, max(0, int(y * h)))
+    return mask_small[my, mx] / 255.0
+
+
+def build_robust_series(raw, name, min_vis=MIN_VISIBILITY, max_jump=MAX_POS_JUMP, min_mask=MIN_MASK_CONF):
     """Track a landmark's (x, y, z) across frames, holding the last trusted
-    position whenever the landmark is missing, low-visibility, or jumps
-    implausibly far in a single frame (a sign MediaPipe has locked onto the
-    wrong object, e.g. background clutter). Returns (xs, ys, zs, valid)."""
+    position whenever the landmark is missing, low-visibility, falls outside
+    the person segmentation mask, or jumps implausibly far in a single frame
+    (signs MediaPipe has locked onto the wrong object, e.g. background
+    clutter). Returns (xs, ys, zs, valid)."""
     n = len(raw)
     xs = np.zeros(n); ys = np.zeros(n); zs = np.zeros(n)
     valid = np.zeros(n, dtype=bool)
@@ -130,6 +144,8 @@ def build_robust_series(raw, name, min_vis=MIN_VISIBILITY, max_jump=MAX_POS_JUMP
     for i, rec in enumerate(raw):
         lm = rec['landmarks'].get(name)
         ok = lm is not None and lm['v'] >= min_vis
+        if ok and mask_confidence(rec.get('_mask_small'), lm['x'], lm['y']) < min_mask:
+            ok = False
         if ok and last is not None:
             if ((lm['x'] - last[0]) ** 2 + (lm['y'] - last[1]) ** 2) ** 0.5 > max_jump:
                 ok = False
@@ -348,7 +364,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
         min_pose_detection_confidence=0.5,
         min_pose_presence_confidence=0.5,
         min_tracking_confidence=0.5,
-        output_segmentation_masks=blur_background,
+        output_segmentation_masks=True,
     )
     landmarker = mp_vision.PoseLandmarker.create_from_options(opts)
 
@@ -369,7 +385,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
         lm_list = result.pose_landmarks[0] if result.pose_landmarks else None
 
         mask_small = None
-        if blur_background and result.segmentation_masks:
+        if result.segmentation_masks:
             mask = result.segmentation_masks[0].numpy_view()
             mh = max(1, round(MASK_DOWNSCALE_W * mask.shape[0] / mask.shape[1]))
             mask_small = cv2.resize(mask, (MASK_DOWNSCALE_W, mh), interpolation=cv2.INTER_AREA)
@@ -659,7 +675,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
     # Re-encode to H.264 for browser
     ann_path = os.path.join(output_dir, 'annotated.mp4')
     ret_code = os.system(
-        f'ffmpeg -i "{raw_out}" -vcodec libx264 -crf 22 -preset fast '
+        f'ffmpeg -i "{raw_out}" -vcodec libx264 -crf 18 -preset medium '
         f'-pix_fmt yuv420p -movflags +faststart -y "{ann_path}" 2>/dev/null'
     )
     if ret_code == 0 and os.path.exists(ann_path) and os.path.getsize(ann_path) > 1024:
