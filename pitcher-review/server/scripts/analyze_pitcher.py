@@ -398,16 +398,19 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
 
     emit('extracting', 0, max(total, 1))
 
-    base_opts = mp_python.BaseOptions(model_asset_path=MODEL_FILE)
-
     # ── Pass 0: locate the pitcher ─────────────────────────────────────────
     # Sample a handful of frames across the whole clip to find a bounding box
     # around the pitcher, then crop the main pass to that box (with margin).
     # This raises the pitcher's effective resolution and excludes background
     # clutter — the single biggest lever for wide/cluttered shots (e.g. a
     # garage) where the pitcher is small in frame.
+    #
+    # Each PoseLandmarker gets its own BaseOptions instance — sharing one
+    # across two create_from_options() calls causes a native crash once the
+    # first landmarker is closed (the underlying model resource gets torn
+    # down out from under the second instance).
     scan_opts = mp_vision.PoseLandmarkerOptions(
-        base_options=base_opts,
+        base_options=mp_python.BaseOptions(model_asset_path=MODEL_FILE),
         running_mode=mp_vision.RunningMode.IMAGE,
         num_poses=1,
         min_pose_detection_confidence=0.5,
@@ -464,7 +467,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
 
     # Build PoseLandmarker in VIDEO mode for the main pass
     opts = mp_vision.PoseLandmarkerOptions(
-        base_options=base_opts,
+        base_options=mp_python.BaseOptions(model_asset_path=MODEL_FILE),
         running_mode=mp_vision.RunningMode.VIDEO,
         num_poses=1,
         min_pose_detection_confidence=0.5,
