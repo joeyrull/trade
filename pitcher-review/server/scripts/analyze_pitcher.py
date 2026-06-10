@@ -243,6 +243,11 @@ def phase_for_frame(phases, i):
 
 def draw_skeleton(frame, lm_list, throw_idx, lead_idx, W, H):
     """lm_list: list of 33 NormalizedLandmark objects."""
+    # Scale overlay sizes to the frame resolution (constants below were
+    # tuned for a ~960px-wide frame) so the skeleton stays clearly visible
+    # on higher-resolution phone footage.
+    scale = max(1.0, W / 960.0)
+
     def pt(idx):
         lm = lm_list[idx]
         return (int(lm.x * W), int(lm.y * H)), getattr(lm, 'visibility', 1.0)
@@ -251,7 +256,7 @@ def draw_skeleton(frame, lm_list, throw_idx, lead_idx, W, H):
         pa, va = pt(a)
         pb, vb = pt(b)
         if va > 0.3 and vb > 0.3:
-            cv2.line(frame, pa, pb, color, thick)
+            cv2.line(frame, pa, pb, color, max(1, round(thick * scale)))
 
     # Throwing arm (highlighted)
     for (a, b), color, thick in [
@@ -261,7 +266,7 @@ def draw_skeleton(frame, lm_list, throw_idx, lead_idx, W, H):
         pa, va = pt(a)
         pb, vb = pt(b)
         if va > 0.3 and vb > 0.3:
-            cv2.line(frame, pa, pb, color, thick)
+            cv2.line(frame, pa, pb, color, max(1, round(thick * scale)))
 
     # Lead arm
     for (a, b), color, thick in [
@@ -271,7 +276,7 @@ def draw_skeleton(frame, lm_list, throw_idx, lead_idx, W, H):
         pa, va = pt(a)
         pb, vb = pt(b)
         if va > 0.3 and vb > 0.3:
-            cv2.line(frame, pa, pb, color, thick)
+            cv2.line(frame, pa, pb, color, max(1, round(thick * scale)))
 
     # Joints
     for name, idx in LM.items():
@@ -279,56 +284,67 @@ def draw_skeleton(frame, lm_list, throw_idx, lead_idx, W, H):
         if vis < 0.25:
             continue
         if idx in [throw_idx['shoulder'], throw_idx['elbow'], throw_idx['wrist']]:
-            cv2.circle(frame, p, 8, (0, 220, 255), -1)
-            cv2.circle(frame, p, 8, (255, 255, 255), 1)
+            cv2.circle(frame, p, round(8 * scale), (0, 220, 255), -1)
+            cv2.circle(frame, p, round(8 * scale), (255, 255, 255), max(1, round(scale)))
         elif idx in [11, 12, 23, 24]:
-            cv2.circle(frame, p, 6, (200, 200, 60), -1)
+            cv2.circle(frame, p, round(6 * scale), (200, 200, 60), -1)
         else:
-            cv2.circle(frame, p, 4, (180, 180, 180), -1)
+            cv2.circle(frame, p, round(4 * scale), (180, 180, 180), -1)
 
 
 def draw_hud(frame, f_data, phase_name):
     H_f, W_f = frame.shape[:2]
+    # Scale the HUD panel/fonts to the frame resolution (constants below
+    # were tuned for a ~960px-wide frame) so the readout stays legible when
+    # the video is shown small on a phone.
+    scale = max(1.0, W_f / 960.0)
     m = f_data['metrics']
+
+    pw, ph = round(292 * scale), round(312 * scale)
     overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (292, 312), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (0, 0), (pw, ph), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
 
-    color = PHASE_COLORS_BGR.get(phase_name, (150, 150, 150))
-    cv2.rectangle(frame, (0, 0), (292, 34), color, -1)
-    cv2.putText(frame, phase_name.replace('_', ' ').upper(), (8, 24),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 2)
+    pad = round(8 * scale)
+    val_x = round(185 * scale)
 
-    y = 58
-    def row(lbl, val, unit='°', good_thresh=None, lo_thresh=None):
+    color = PHASE_COLORS_BGR.get(phase_name, (150, 150, 150))
+    header_h = round(34 * scale)
+    cv2.rectangle(frame, (0, 0), (pw, header_h), color, -1)
+    cv2.putText(frame, phase_name.replace('_', ' ').upper(), (pad, round(24 * scale)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65 * scale, (0, 0, 0), max(1, round(2 * scale)))
+
+    y = round(58 * scale)
+    row_h = round(24 * scale)
+    def row(lbl, val, unit='deg', good_thresh=None, lo_thresh=None):
         nonlocal y
-        cv2.putText(frame, lbl, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (160, 210, 255), 1)
+        cv2.putText(frame, lbl, (pad, y), cv2.FONT_HERSHEY_SIMPLEX, 0.46 * scale, (160, 210, 255), max(1, round(scale)))
         vc = (255, 255, 255)
         if good_thresh is not None and val >= good_thresh:
             vc = (80, 255, 80)
         elif lo_thresh is not None and val < lo_thresh:
             vc = (80, 80, 255)
-        cv2.putText(frame, f'{val:+.1f}{unit}', (185, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, vc, 1)
-        y += 24
+        cv2.putText(frame, f'{val:+.1f}{unit}', (val_x, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52 * scale, vc, max(1, round(scale)))
+        y += row_h
 
     row('Hip Rotation',       m.get('hip_rotation',      0.0))
     row('Shoulder Rot.',      m.get('shoulder_rotation', 0.0))
     row('Hip-Shoulder Sep',   m.get('hip_shoulder_sep',  0.0), good_thresh=25.0, lo_thresh=10.0)
     row('Elbow Height',       m.get('elbow_height_pct',  0.0), unit='%', good_thresh=5.0)
     row('Elbow Angle',        m.get('elbow_angle',        0.0))
-    row('Hip Speed',  abs(m.get('hip_rotation_speed', 0.0)),   unit='°/s', good_thresh=400.0, lo_thresh=150.0)
-    row('Chest Speed', abs(m.get('chest_rotation_speed', 0.0)), unit='°/s', good_thresh=500.0, lo_thresh=200.0)
-    row('Arm Speed', abs(m.get('arm_speed', 0.0)),            unit='°/s', good_thresh=600.0, lo_thresh=200.0)
+    row('Hip Speed',  abs(m.get('hip_rotation_speed', 0.0)),   unit='deg/s', good_thresh=400.0, lo_thresh=150.0)
+    row('Chest Speed', abs(m.get('chest_rotation_speed', 0.0)), unit='deg/s', good_thresh=500.0, lo_thresh=200.0)
+    row('Arm Speed', abs(m.get('arm_speed', 0.0)),            unit='deg/s', good_thresh=600.0, lo_thresh=200.0)
     row('Trunk Tilt',         m.get('trunk_tilt',         0.0))
 
     if m.get('low_confidence'):
-        cv2.putText(frame, '~ low-confidence tracking', (8, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 140, 255), 1)
-        y += 22
+        cv2.putText(frame, '~ low-confidence tracking', (pad, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42 * scale, (0, 140, 255), max(1, round(scale)))
+        y += round(22 * scale)
 
     cv2.putText(frame, f't={f_data["time"]:.3f}s  #{f_data["frame"]}',
-                (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (100, 100, 100), 1)
+                (pad, y), cv2.FONT_HERSHEY_SIMPLEX, 0.38 * scale, (100, 100, 100), max(1, round(scale)))
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
@@ -658,11 +674,14 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
         if rec['_pose_ok'] and rec['_lm_list']:
             draw_skeleton(bgr, rec['_lm_list'], throw_idx, lead_idx, W, H)
             if te_name in rec['landmarks']:
+                hud_scale = max(1.0, W / 960.0)
                 lme = rec['landmarks'][te_name]
-                ex, ey = int(lme['x']*W)+12, int(lme['y']*H)-10
-                ex = max(5, min(ex, W-55)); ey = max(15, min(ey, H-5))
-                cv2.putText(bgr, f'{rec["metrics"]["elbow_angle"]:.0f}°',
-                            (ex, ey), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,0), 2)
+                off  = round(12 * hud_scale)
+                bound = round(55 * hud_scale)
+                ex, ey = int(lme['x']*W) + off, int(lme['y']*H) - off
+                ex = max(5, min(ex, W - bound)); ey = max(15, min(ey, H - 5))
+                cv2.putText(bgr, f'{rec["metrics"]["elbow_angle"]:.0f}deg',
+                            (ex, ey), cv2.FONT_HERSHEY_SIMPLEX, 0.55 * hud_scale, (255, 255, 0), max(1, round(2 * hud_scale)))
         draw_hud(bgr, rec, rec['phase'])
         writer.write(bgr)
         i += 1
