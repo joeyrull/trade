@@ -111,9 +111,10 @@ MIN_MASK_CONF    = 0.4   # min person-segmentation confidence to trust a landmar
 ARM_CUTOFF_HZ = 14.0  # elbow-extension rate (arm speed)
 ROT_CUTOFF_HZ = 6.0   # hip / shoulder rotation speed, trunk tilt
 
-# ── Background blur ──────────────────────────────────────────────────────────
+# ── Segmentation mask ────────────────────────────────────────────────────────
+# The pitcher/background mask is used to confidence-gate the robust trackers
+# (MIN_MASK_CONF); it is no longer used for any cosmetic background blur.
 MASK_DOWNSCALE_W = 320  # width (px) to downsample segmentation masks to before storing
-BG_BLUR_KSIZE    = 45   # Gaussian blur kernel size (odd) applied to background pixels
 
 # ── Pitcher framing / zoom ───────────────────────────────────────────────────
 # Wide or cluttered shots (e.g. a garage with the pitcher small in frame) hurt
@@ -445,7 +446,7 @@ def draw_hud(frame, f_data, phase_name):
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
-def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, blur_background=True):
+def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     os.makedirs(output_dir, exist_ok=True)
     ensure_model()
 
@@ -931,12 +932,6 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
             break
         rec = raw[i]
 
-        if blur_background and rec['_mask_small'] is not None:
-            mask_full = cv2.resize(rec['_mask_small'], (W, H), interpolation=cv2.INTER_LINEAR)
-            alpha = (mask_full.astype(np.float32) / 255.0)[..., None]
-            blurred = cv2.GaussianBlur(bgr, (BG_BLUR_KSIZE, BG_BLUR_KSIZE), 0)
-            bgr = (bgr.astype(np.float32) * alpha + blurred.astype(np.float32) * (1 - alpha)).astype(np.uint8)
-
         # Only draw the skeleton/elbow-angle overlay when the robust tracker
         # trusts this frame's landmarks. MediaPipe can keep returning *some*
         # pose for a frame even after it has lost the pitcher (e.g. locked
@@ -1027,8 +1022,6 @@ def main():
     parser.add_argument('--output-dir', default='./pitcher_analysis')
     parser.add_argument('--throw-hand', choices=['left', 'right'], default='left')
     parser.add_argument('--progress',   action='store_true')
-    parser.add_argument('--no-blur-background', action='store_false', dest='blur_background',
-                         default=True, help='Disable automatic background blur in the annotated video')
     args = parser.parse_args()
 
     def cb(d):
@@ -1036,7 +1029,7 @@ def main():
             print(json.dumps(d), flush=True)
 
     try:
-        r = analyze_video(args.video, args.output_dir, args.throw_hand, cb, args.blur_background)
+        r = analyze_video(args.video, args.output_dir, args.throw_hand, cb)
         print(json.dumps({'status': 'done', **r}), flush=True)
     except Exception as e:
         import traceback
