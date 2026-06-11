@@ -206,21 +206,37 @@ def filter_angle_series(angles, valid, max_jump_deg):
 
 # ── Phase detection ───────────────────────────────────────────────────────────
 
-def detect_phases(frames, fps):
-    n = len(frames)
+def detect_phases(lead_ankle_y, throw_elbow_y, wrist_speed, fps):
+    n = len(lead_ankle_y)
     if n < 5:
         return {'setup': (0, n - 1)}
 
-    lead_y  = smooth([f['_lead_ankle_y']  for f in frames], window=9)
-    elbow_y = smooth([f['_throw_elbow_y'] for f in frames], window=7)
-    wspeed  = smooth([f['_wrist_speed']   for f in frames], window=5)
+    # Smoothing windows below are expressed as a fixed sample count for
+    # ~30fps video (the historical tuning), then scaled up for higher frame
+    # rates so they cover the same span of *time* — a fixed 9-sample window
+    # covers 300ms at 30fps but only 37ms at 240fps, leaving per-frame
+    # landmark jitter unfiltered and dominating the velocity signal.
+    pos_win = max(9, round(fps * 0.15))
+    lead_y  = smooth(lead_ankle_y,  window=pos_win)
+    elbow_y = smooth(throw_elbow_y, window=7)
+    wspeed  = smooth(wrist_speed,   window=5)
 
-    ankle_vel = np.gradient(lead_y)
+    # Ankle vertical velocity in normalized-coords/sec (not per-frame), so the
+    # descending/stopping thresholds below are frame-rate independent. Without
+    # this, the same physical foot-strike motion that crosses the threshold at
+    # 30fps would fall short at 120fps slow-motion — exactly the frame rate
+    # the UI recommends for better arm-speed accuracy.
+    vel_win = max(9, round(fps * 0.08))
+    ankle_vel = smooth((np.gradient(lead_y) * fps).tolist(), window=vel_win)
+    # ~50ms lookback, but never less than 3 frames — a shorter window falls
+    # inside the smoothing filter's edge region and reacts to its artifacts.
+    lookback = max(3, round(fps * 0.05))
+    start = max(lookback, 4)
 
     # Foot strike: ankle descending then stops
     foot_strike = n // 2
-    for i in range(4, n - 4):
-        if ankle_vel[i-3] > 0.003 and ankle_vel[i] < 0.0005:
+    for i in range(start, n - 4):
+        if ankle_vel[i - lookback] > 0.09 and ankle_vel[i] < 0.015:
             foot_strike = i
             break
 
@@ -541,8 +557,6 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
             '_pose_ok':        lm_list is not None,
             '_lm_list':        lm_list,
             '_mask_small':     mask_small,
-            '_lead_ankle_y':   0.85,
-            '_throw_elbow_y':  0.4,
             '_wrist_speed':    0.0,
             'landmarks': {},
         }
@@ -556,11 +570,6 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
                     'z': round(lm.z, 5),
                     'v': round(getattr(lm, 'visibility', 1.0), 3),
                 }
-            rec['_lead_ankle_y']  = lm_list[lead_idx['ankle']].y
-            rec['_throw_elbow_y'] = lm_list[throw_idx['elbow']].y
-        elif raw:
-            rec['_lead_ankle_y']  = raw[-1]['_lead_ankle_y']
-            rec['_throw_elbow_y'] = raw[-1]['_throw_elbow_y']
 
         raw.append(rec)
         frame_num += 1
@@ -577,6 +586,8 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
     ts_name = f'{throw_side}_shoulder'
     te_name = f'{throw_side}_elbow'
     tw_name = f'{throw_side}_wrist'
+    lead_side = 'right' if throw_hand == 'left' else 'left'
+    la_name = f'{lead_side}_ankle'
 
     # ── Robust landmark tracks ─────────────────────────────────────────────
     # Hold the last trusted position whenever a landmark is missing,
@@ -589,6 +600,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
     tex, tey, tez, te_ok = build_robust_series(raw, te_name)
     twx, twy, twz, tw_ok = build_robust_series(raw, tw_name)
     tsx, tsy, tsz, ts_ok = build_robust_series(raw, ts_name)
+    _, lay, _, _ = build_robust_series(raw, la_name)
 
     low_conf = [not (lh_ok[i] and rh_ok[i] and ls_ok[i] and rs_ok[i]
                       and te_ok[i] and tw_ok[i] and ts_ok[i])
@@ -698,7 +710,8 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
         }
 
     # Phases
-    phases = detect_phases(raw, fps)
+    wrist_speed = [r['_wrist_speed'] for r in raw]
+    phases = detect_phases(lay.tolist(), tey.tolist(), wrist_speed, fps)
     for i, rec in enumerate(raw):
         rec['phase'] = phase_for_frame(phases, i)
 
