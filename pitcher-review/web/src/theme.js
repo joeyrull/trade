@@ -1,39 +1,42 @@
-// Shared color palette for the "refined dark analytics" theme. Keep this in
-// sync with the CSS custom properties defined in :root (App.css) — CSS vars
+// Shared color palette for the warm "amber/copper analytics" theme. Keep this
+// in sync with the CSS custom properties defined in :root (App.css) — CSS vars
 // can't be imported into JS, so the dark-UI tones are duplicated here for use
 // in inline styles (SVG/recharts strokes, badges, etc).
 
 // Per-phase colors used in the HUD badge, timeline, and chart reference lines.
-// All are dark/muted enough to host white text.
+// All are dark/muted enough to host white text. The set spans the warm
+// amber/copper/bronze family with a couple of cool counterpoints (teal, slate)
+// so the eight phases stay distinguishable.
 export const PHASE_COLORS = {
-  setup:          '#555f6e',
-  windup:         '#9c8a3f',
-  stride:         '#3f7f99',
-  foot_strike:    '#4f8f6b',
-  arm_cocking:    '#a36a3c',
-  acceleration:   '#a8453a',
-  release:        '#7a5a9e',
-  follow_through: '#5a649c',
+  setup:          '#5c5444',
+  windup:         '#8a6d3a',
+  stride:         '#4f7a72',
+  foot_strike:    '#6f8a45',
+  arm_cocking:    '#a8743c',
+  acceleration:   '#aa4f3a',
+  release:        '#8a5a78',
+  follow_through: '#5a6480',
 };
 
-// Metric/chart line colors
+// Metric/chart line colors — warm-dominant, with sage and dusty-blue as cool
+// counterpoints so nine simultaneous lines remain separable.
 export const METRIC_COLORS = {
-  hipSpeed:    '#5aa3b0', // muted cyan
-  chestSpeed:  '#c99a52', // muted amber
-  armSpeed:    '#c2685f', // muted red/terracotta
-  hss:         '#5fae7d', // muted green
-  hip:         '#bd7a48', // muted burnt orange
-  shoulder:    '#5b8bc4', // muted steel blue
-  elbowH:      '#8b7aa8', // muted purple
-  elbowAngle:  '#a594c2', // muted lavender
-  trunkTilt:   '#b3935a', // muted ochre
+  hipSpeed:    '#6b9a8a', // sage teal
+  chestSpeed:  '#d4a24e', // amber
+  armSpeed:    '#c2685f', // copper red
+  hss:         '#8caa4e', // warm olive green
+  hip:         '#b08968', // bronze
+  shoulder:    '#7a92a8', // dusty blue
+  elbowH:      '#b08a92', // warm mauve
+  elbowAngle:  '#c9a87e', // tan
+  trunkTilt:   '#c99a52', // ochre
 };
 
 // A/B/C grade colors
 export const GRADE_COLORS = {
-  A: '#4f8f63',
-  B: '#a3964f',
-  C: '#b3624a',
+  A: '#8caa4e',
+  B: '#c9a04e',
+  C: '#c2685f',
 };
 
 export function gradeColor(letter) {
@@ -42,14 +45,14 @@ export function gradeColor(letter) {
 
 // Composite-score rating bands (Lab Report scorecard)
 export const RATING_COLORS = {
-  elite:   '#5fae7d',
-  average: '#a3b35a',
+  elite:   '#8caa4e',
+  average: '#c9a04e',
   needsWork: '#c2825f',
 };
 
 // Live-metrics good/bad indicator colors
 export const STATUS_COLORS = {
-  good: '#5fae7d',
+  good: '#8caa4e',
   bad:  '#c2825f',
-  frozen: '#5a6172',
+  frozen: '#5c5444',
 };

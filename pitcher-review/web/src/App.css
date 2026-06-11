@@ -1,20 +1,20 @@
 /* ── Theme tokens ──────────────────────────────────────────────────────────── */
 :root {
-  --bg:            #0b0d11;
-  --bg-panel:      #14171d;
-  --bg-elevated:   #1a1e25;
-  --border:        #262b34;
-  --border-strong: #383f4c;
-  --text:          #e4e7ec;
-  --text-secondary:#8b93a3;
-  --text-muted:    #565d6d;
-  --accent:        #5b8bc4;
-  --accent-hover:  #729dcf;
-  --accent-soft:   rgba(91, 139, 196, 0.12);
-  --good:          #5fae7d;
-  --good-soft:     rgba(95, 174, 125, 0.12);
-  --warn:          #c99a52;
-  --warn-soft:     rgba(201, 154, 82, 0.12);
+  --bg:            #0d0b09;
+  --bg-panel:      #16130f;
+  --bg-elevated:   #1c1813;
+  --border:        #2c261e;
+  --border-strong: #41382c;
+  --text:          #ece7df;
+  --text-secondary:#a39a8a;
+  --text-muted:    #6b6354;
+  --accent:        #d4a24e;
+  --accent-hover:  #e0b366;
+  --accent-soft:   rgba(212, 162, 78, 0.12);
+  --good:          #8caa4e;
+  --good-soft:     rgba(140, 170, 78, 0.12);
+  --warn:          #d99a3e;
+  --warn-soft:     rgba(217, 154, 62, 0.12);
   --bad:           #c2685f;
   --bad-soft:      rgba(194, 104, 95, 0.12);
   --radius:        6px;
@@ -696,14 +696,14 @@ body {
 .stat-label { font-size: 11px; color: var(--text-muted); }
 
 /* Phase dot colors — keep in sync with PHASE_COLORS in src/theme.js */
-.phase-setup          { background: #555f6e; }
-.phase-windup         { background: #9c8a3f; }
-.phase-stride         { background: #3f7f99; }
-.phase-foot_strike    { background: #4f8f6b; }
-.phase-arm_cocking    { background: #a36a3c; }
-.phase-acceleration   { background: #a8453a; }
-.phase-release        { background: #7a5a9e; }
-.phase-follow_through { background: #5a649c; }
+.phase-setup          { background: #5c5444; }
+.phase-windup         { background: #8a6d3a; }
+.phase-stride         { background: #4f7a72; }
+.phase-foot_strike    { background: #6f8a45; }
+.phase-arm_cocking    { background: #a8743c; }
+.phase-acceleration   { background: #aa4f3a; }
+.phase-release        { background: #8a5a78; }
+.phase-follow_through { background: #5a6480; }
 
 /* ── Lab Report tab ────────────────────────────────────────────────────────── */
 .lab-report {
@@ -758,7 +758,7 @@ body {
   position: relative;
   height: 6px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, #b3624a 0%, #b3624a 50%, #a3964f 50%, #a3964f 90%, #4f8f63 90%, #4f8f63 100%);
+  background: linear-gradient(90deg, #c2685f 0%, #c2685f 50%, #c9a04e 50%, #c9a04e 90%, #8caa4e 90%, #8caa4e 100%);
 }
 .pillar-bar-marker {
   position: absolute;
