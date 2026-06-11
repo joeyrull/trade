@@ -1,4 +1,5 @@
 import { PILLARS } from '../data/pillars';
+import { RATING_COLORS } from '../theme';
 
 // Maps a raw value onto a 0-100 scale where `avg` ≈ 50 and `good` ≈ 90,
 // extrapolating linearly beyond those anchors and clamping to [0, 100].
@@ -14,9 +15,9 @@ function scoreMetric(m, value, summary, frames) {
 }
 
 function ratingFor(score) {
-  if (score >= 80) return { label: 'Elite range',   color: '#4dff88' };
-  if (score >= 50) return { label: 'Average range', color: '#aadd44' };
-  return                  { label: 'Needs work',     color: '#ff8844' };
+  if (score >= 80) return { label: 'Elite range',   color: RATING_COLORS.elite };
+  if (score >= 50) return { label: 'Average range', color: RATING_COLORS.average };
+  return                  { label: 'Needs work',     color: RATING_COLORS.needsWork };
 }
 
 export default function LabScorecard({ summary, frames }) {

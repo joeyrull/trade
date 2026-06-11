@@ -60,7 +60,7 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <div className="header-inner">
-          <span className="logo">⚾ Pitcher Review</span>
+          <span className="logo">Pitcher Review</span>
           <span className="subtitle">Side-View Biomechanics — Torso · Chest · Arm Speed</span>
           {(job || result) && (
             <button className="btn-ghost" onClick={handleReset}>New Analysis</button>

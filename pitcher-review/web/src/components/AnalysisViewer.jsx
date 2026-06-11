@@ -5,6 +5,7 @@ import SummaryReport from './SummaryReport';
 import PoseOverlay from './PoseOverlay';
 import LabReport from './LabReport';
 import VideoControls from './VideoControls';
+import { PHASE_COLORS, METRIC_COLORS, STATUS_COLORS } from '../theme';
 
 const TABS = ['Overview', 'Charts', 'Phases', 'Lab Report', 'Annotated Video'];
 
@@ -119,17 +120,6 @@ function LiveMetrics({ frame, summary }) {
   const m = frame.metrics;
   const phase = frame.phase || 'setup';
 
-  const PHASE_COLORS = {
-    setup: '#888',
-    windup: '#ffd700',
-    stride: '#00c8ff',
-    foot_strike: '#00ff88',
-    arm_cocking: '#ff6400',
-    acceleration: '#ff2200',
-    release: '#cc00ff',
-    follow_through: '#8080ff',
-  };
-
   const metricRows = [
     { label: 'Hip Rotation',      val: m.hip_rotation,      unit: '°',   lo: -45, hi: 45 },
     { label: 'Shoulder Rotation', val: m.shoulder_rotation, unit: '°',   lo: -45, hi: 45 },
@@ -144,7 +134,7 @@ function LiveMetrics({ frame, summary }) {
 
   return (
     <div className="live-metrics">
-      <div className="phase-badge" style={{ background: PHASE_COLORS[phase] || '#888' }}>
+      <div className="phase-badge" style={{ background: PHASE_COLORS[phase] || PHASE_COLORS.setup }}>
         {phase.replace(/_/g, ' ').toUpperCase()}
       </div>
       {m.low_confidence && (
@@ -156,10 +146,10 @@ function LiveMetrics({ frame, summary }) {
 
       {metricRows.map(({ label, val, unit, good, neutral }) => {
         const frozen = m.low_confidence;
-        const color = frozen ? '#7a8599'
-          : neutral ? '#fff'
-          : good ? (good(val) ? '#4dff88' : '#ff8844')
-          : '#fff';
+        const color = frozen ? STATUS_COLORS.frozen
+          : neutral ? 'var(--text)'
+          : good ? (good(val) ? STATUS_COLORS.good : STATUS_COLORS.bad)
+          : 'var(--text)';
         return (
           <div key={label} className={`metric-row ${frozen ? 'frozen' : ''}`}>
             <span className="metric-label">{label}</span>
@@ -172,9 +162,9 @@ function LiveMetrics({ frame, summary }) {
       })}
 
       <div className="speed-bars">
-        <SpeedBar label="Hip"   value={Math.abs(m.hip_rotation_speed)}   max={800} color="#00c8ff" />
-        <SpeedBar label="Chest" value={Math.abs(m.chest_rotation_speed)} max={1000} color="#ffaa00" />
-        <SpeedBar label="Arm"   value={Math.abs(m.arm_speed)}            max={1200} color="#ff4444" />
+        <SpeedBar label="Hip"   value={Math.abs(m.hip_rotation_speed)}   max={800} color={METRIC_COLORS.hipSpeed} />
+        <SpeedBar label="Chest" value={Math.abs(m.chest_rotation_speed)} max={1000} color={METRIC_COLORS.chestSpeed} />
+        <SpeedBar label="Arm"   value={Math.abs(m.arm_speed)}            max={1200} color={METRIC_COLORS.armSpeed} />
       </div>
     </div>
   );

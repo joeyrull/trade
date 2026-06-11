@@ -1,15 +1,5 @@
 import { useMemo } from 'react';
-
-const PHASE_COLORS = {
-  setup: '#555',
-  windup: '#c8a800',
-  stride: '#0088bb',
-  foot_strike: '#00aa55',
-  arm_cocking: '#cc5000',
-  acceleration: '#cc1500',
-  release: '#9900cc',
-  follow_through: '#5555bb',
-};
+import { PHASE_COLORS } from '../theme';
 
 const PHASE_SHORT = {
   setup: 'SETUP',
@@ -58,7 +48,7 @@ export default function PhaseTimeline({ summary, frames, currentFrame, onSeek })
             style={{
               left: `${seg.left}%`,
               width: `${seg.width}%`,
-              background: PHASE_COLORS[seg.name] || '#666',
+              background: PHASE_COLORS[seg.name] || PHASE_COLORS.setup,
             }}
             title={`${seg.name.replace(/_/g, ' ')} — frames ${seg.start}–${seg.end}`}
           >

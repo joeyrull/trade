@@ -14,7 +14,6 @@ export default function ProgressBar({ job }) {
   if (status === 'error') {
     return (
       <div className="progress-card error">
-        <span className="progress-icon">❌</span>
         <h3>Analysis Failed</h3>
         <p className="error-msg">{error || 'Unknown error'}</p>
       </div>
@@ -23,7 +22,6 @@ export default function ProgressBar({ job }) {
 
   return (
     <div className="progress-card">
-      <span className="progress-icon">⚙️</span>
       <h3>Analyzing Delivery</h3>
 
       <div className="stage-steps">

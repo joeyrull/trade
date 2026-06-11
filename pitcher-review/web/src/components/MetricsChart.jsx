@@ -3,13 +3,7 @@ import {
   ReferenceLine, ResponsiveContainer, Brush,
 } from 'recharts';
 import { useMemo } from 'react';
-
-const PHASE_COLORS = {
-  setup: '#888', windup: '#ffd700', stride: '#00c8ff',
-  foot_strike: '#00ff88', arm_cocking: '#ff6400',
-  acceleration: '#ff2200', release: '#cc00ff',
-  follow_through: '#8080ff',
-};
+import { PHASE_COLORS, METRIC_COLORS } from '../theme';
 
 // Downsample to at most maxPts for chart performance
 function downsample(arr, maxPts = 300) {
@@ -43,7 +37,7 @@ export default function MetricsChart({ frames, summary, currentFrame, onSeek }) 
     .map(([name, { start }]) => ({
       name,
       t: parseFloat((start / summary.fps).toFixed(3)),
-      color: PHASE_COLORS[name] || '#888',
+      color: PHASE_COLORS[name] || PHASE_COLORS.setup,
     }));
 
   const currentT = parseFloat((currentFrame / summary.fps).toFixed(3));
@@ -56,24 +50,24 @@ export default function MetricsChart({ frames, summary, currentFrame, onSeek }) 
       <ChartBlock title="Rotation Angles & X-Factor (Hip-Shoulder Separation)">
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={chartData} onClick={d => d?.activePayload && onSeek(d.activePayload[0]?.payload?.frame)}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            <XAxis dataKey="t" stroke="#888" tick={{ fontSize: 11 }} label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: '#888', fontSize: 11 }} />
-            <YAxis stroke="#888" tick={{ fontSize: 11 }} unit="°" />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="t" stroke="var(--text-muted)" tick={{ fontSize: 11 }} label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: 'var(--text-muted)', fontSize: 11 }} />
+            <YAxis stroke="var(--text-muted)" tick={{ fontSize: 11 }} unit="°" />
             <Tooltip
-              contentStyle={{ background: '#1a1a1a', border: '1px solid #444', borderRadius: 6 }}
-              labelStyle={{ color: '#aaa' }}
+              contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-strong)', borderRadius: 6 }}
+              labelStyle={{ color: 'var(--text-secondary)' }}
               formatter={(val, name) => [`${val.toFixed(1)}°`, name]}
               labelFormatter={t => `t = ${t}s`}
             />
-            <Legend wrapperStyle={{ color: '#ccc', fontSize: 12 }} />
+            <Legend wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 12 }} />
             {refLines.map(r => (
               <ReferenceLine key={r.name} x={r.t} stroke={r.color} strokeDasharray="4 2"
                 label={{ value: r.name.replace('_', ' '), fill: r.color, fontSize: 10, position: 'top' }} />
             ))}
-            <ReferenceLine x={currentT} stroke="#fff" strokeDasharray="2 2" />
-            <Line type="monotone" dataKey="hip"      name="Hip Rotation"     stroke="#f0a000" strokeWidth={2} dot={<CustomDot />} />
-            <Line type="monotone" dataKey="shoulder" name="Shoulder Rotation" stroke="#00aaff" strokeWidth={2} dot={<CustomDot />} />
-            <Line type="monotone" dataKey="hss"      name="Hip-Shoulder Sep"  stroke="#00ff88" strokeWidth={2} dot={<CustomDot />} />
+            <ReferenceLine x={currentT} stroke="var(--text)" strokeDasharray="2 2" />
+            <Line type="monotone" dataKey="hip"      name="Hip Rotation"     stroke={METRIC_COLORS.hip} strokeWidth={2} dot={<CustomDot />} />
+            <Line type="monotone" dataKey="shoulder" name="Shoulder Rotation" stroke={METRIC_COLORS.shoulder} strokeWidth={2} dot={<CustomDot />} />
+            <Line type="monotone" dataKey="hss"      name="Hip-Shoulder Sep"  stroke={METRIC_COLORS.hss} strokeWidth={2} dot={<CustomDot />} />
           </LineChart>
         </ResponsiveContainer>
       </ChartBlock>
@@ -82,23 +76,23 @@ export default function MetricsChart({ frames, summary, currentFrame, onSeek }) 
       <ChartBlock title="Kinetic Chain Speed — Hip → Chest → Arm (°/s)">
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={chartData} onClick={d => d?.activePayload && onSeek(d.activePayload[0]?.payload?.frame)}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            <XAxis dataKey="t" stroke="#888" tick={{ fontSize: 11 }} label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: '#888', fontSize: 11 }} />
-            <YAxis stroke="#888" tick={{ fontSize: 11 }} unit="°/s" />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="t" stroke="var(--text-muted)" tick={{ fontSize: 11 }} label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: 'var(--text-muted)', fontSize: 11 }} />
+            <YAxis stroke="var(--text-muted)" tick={{ fontSize: 11 }} unit="°/s" />
             <Tooltip
-              contentStyle={{ background: '#1a1a1a', border: '1px solid #444', borderRadius: 6 }}
-              labelStyle={{ color: '#aaa' }}
+              contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-strong)', borderRadius: 6 }}
+              labelStyle={{ color: 'var(--text-secondary)' }}
               formatter={(val, name) => [`${val.toFixed(0)}°/s`, name]}
               labelFormatter={t => `t = ${t}s`}
             />
-            <Legend wrapperStyle={{ color: '#ccc', fontSize: 12 }} />
+            <Legend wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 12 }} />
             {refLines.map(r => (
               <ReferenceLine key={r.name} x={r.t} stroke={r.color} strokeDasharray="4 2" />
             ))}
-            <ReferenceLine x={currentT} stroke="#fff" strokeDasharray="2 2" />
-            <Line type="monotone" dataKey="hipSpeed"   name="Hip Speed"   stroke="#00c8ff" strokeWidth={2} dot={<CustomDot />} />
-            <Line type="monotone" dataKey="chestSpeed" name="Chest Speed" stroke="#ffaa00" strokeWidth={2} dot={<CustomDot />} />
-            <Line type="monotone" dataKey="armSpeed"   name="Arm Speed"   stroke="#ff4444" strokeWidth={2} dot={<CustomDot />} />
+            <ReferenceLine x={currentT} stroke="var(--text)" strokeDasharray="2 2" />
+            <Line type="monotone" dataKey="hipSpeed"   name="Hip Speed"   stroke={METRIC_COLORS.hipSpeed} strokeWidth={2} dot={<CustomDot />} />
+            <Line type="monotone" dataKey="chestSpeed" name="Chest Speed" stroke={METRIC_COLORS.chestSpeed} strokeWidth={2} dot={<CustomDot />} />
+            <Line type="monotone" dataKey="armSpeed"   name="Arm Speed"   stroke={METRIC_COLORS.armSpeed} strokeWidth={2} dot={<CustomDot />} />
           </LineChart>
         </ResponsiveContainer>
       </ChartBlock>
@@ -107,22 +101,22 @@ export default function MetricsChart({ frames, summary, currentFrame, onSeek }) 
       <ChartBlock title="Elbow Height (%) & Trunk Tilt (°)">
         <ResponsiveContainer width="100%" height={200}>
           <LineChart data={chartData} onClick={d => d?.activePayload && onSeek(d.activePayload[0]?.payload?.frame)}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            <XAxis dataKey="t" stroke="#888" tick={{ fontSize: 11 }} label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: '#888', fontSize: 11 }} />
-            <YAxis stroke="#888" tick={{ fontSize: 11 }} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="t" stroke="var(--text-muted)" tick={{ fontSize: 11 }} label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: 'var(--text-muted)', fontSize: 11 }} />
+            <YAxis stroke="var(--text-muted)" tick={{ fontSize: 11 }} />
             <Tooltip
-              contentStyle={{ background: '#1a1a1a', border: '1px solid #444', borderRadius: 6 }}
-              labelStyle={{ color: '#aaa' }}
+              contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-strong)', borderRadius: 6 }}
+              labelStyle={{ color: 'var(--text-secondary)' }}
               labelFormatter={t => `t = ${t}s`}
             />
-            <Legend wrapperStyle={{ color: '#ccc', fontSize: 12 }} />
+            <Legend wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 12 }} />
             {refLines.map(r => (
               <ReferenceLine key={r.name} x={r.t} stroke={r.color} strokeDasharray="4 2" />
             ))}
-            <ReferenceLine x={currentT} stroke="#fff" strokeDasharray="2 2" />
-            <ReferenceLine y={0} stroke="#555" />
-            <Line type="monotone" dataKey="elbowH"    name="Elbow Height (%)" stroke="#aa88ff" strokeWidth={2} dot={<CustomDot />} />
-            <Line type="monotone" dataKey="trunkTilt" name="Trunk Tilt (°)"   stroke="#ffaa44" strokeWidth={2} dot={<CustomDot />} />
+            <ReferenceLine x={currentT} stroke="var(--text)" strokeDasharray="2 2" />
+            <ReferenceLine y={0} stroke="var(--border-strong)" />
+            <Line type="monotone" dataKey="elbowH"    name="Elbow Height (%)" stroke={METRIC_COLORS.elbowH} strokeWidth={2} dot={<CustomDot />} />
+            <Line type="monotone" dataKey="trunkTilt" name="Trunk Tilt (°)"   stroke={METRIC_COLORS.trunkTilt} strokeWidth={2} dot={<CustomDot />} />
           </LineChart>
         </ResponsiveContainer>
       </ChartBlock>

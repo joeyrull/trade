@@ -60,7 +60,6 @@ export default function VideoUploader({ onUpload }) {
             <video src={preview} className="preview-video" muted playsInline />
           ) : (
             <div className="drop-placeholder">
-              <span className="drop-icon">🎥</span>
               <span>Drop video here or click to browse</span>
               <span className="drop-formats">MP4 · MOV · AVI · MKV · WebM</span>
             </div>
@@ -89,7 +88,7 @@ export default function VideoUploader({ onUpload }) {
                 onClick={() => setThrowHand(h)}
                 type="button"
               >
-                {h === 'left' ? '🤚 Left (Lefty)' : '✋ Right (Righty)'}
+                {h === 'left' ? 'Left (Lefty)' : 'Right (Righty)'}
               </button>
             ))}
           </div>
@@ -97,12 +96,9 @@ export default function VideoUploader({ onUpload }) {
 
         <div className="camera-tip">
           <div className="tip-row">
-            <span className="tip-icon">📷</span>
-            <span>
-              {throwHand === 'left'
-                ? "Camera at first base — pitcher's right side visible. Throwing (left) arm faces away from camera."
-                : "Camera at third base — pitcher's left side visible. Throwing (right) arm faces away from camera."}
-            </span>
+            {throwHand === 'left'
+              ? "Camera at first base — pitcher's right side visible. Throwing (left) arm faces away from camera."
+              : "Camera at third base — pitcher's left side visible. Throwing (right) arm faces away from camera."}
           </div>
         </div>
 

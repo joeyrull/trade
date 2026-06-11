@@ -5,13 +5,7 @@ import {
 import { useMemo } from 'react';
 import { METRICS_LIBRARY } from '../data/metricsLibrary';
 import LabScorecard from './LabScorecard';
-
-const PHASE_COLORS = {
-  setup: '#888', windup: '#ffd700', stride: '#00c8ff',
-  foot_strike: '#00ff88', arm_cocking: '#ff6400',
-  acceleration: '#ff2200', release: '#cc00ff',
-  follow_through: '#8080ff',
-};
+import { PHASE_COLORS, GRADE_COLORS, gradeColor } from '../theme';
 
 function downsample(arr, maxPts = 300) {
   if (arr.length <= maxPts) return arr;
@@ -20,9 +14,9 @@ function downsample(arr, maxPts = 300) {
 }
 
 function grade(val, good, avg) {
-  if (val >= good) return { letter: 'A', color: '#1a8a4a' };
-  if (val >= avg)  return { letter: 'B', color: '#9aa015' };
-  return           { letter: 'C', color: '#c0501a' };
+  if (val >= good) return { letter: 'A', color: gradeColor('A') };
+  if (val >= avg)  return { letter: 'B', color: gradeColor('B') };
+  return           { letter: 'C', color: gradeColor('C') };
 }
 
 export default function LabReport({ summary, frames, currentFrame, onSeek }) {
@@ -49,7 +43,7 @@ export default function LabReport({ summary, frames, currentFrame, onSeek }) {
     .map(([name, { start }]) => ({
       name,
       t: parseFloat((start / summary.fps).toFixed(3)),
-      color: PHASE_COLORS[name] || '#888',
+      color: PHASE_COLORS[name] || PHASE_COLORS.setup,
     }));
 
   const currentT = parseFloat((currentFrame / summary.fps).toFixed(3));
@@ -133,30 +127,30 @@ function LabMetricCard({ metric, chartData, refLines, currentT, onSeek }) {
       <div className="lab-chart-panel">
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={chartData} onClick={d => d?.activePayload && onSeek(d.activePayload[0]?.payload?.frame)}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#ccc" />
-            <XAxis dataKey="t" stroke="#555" tick={{ fontSize: 11 }}
-              label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: '#555', fontSize: 11 }} />
-            <YAxis stroke="#555" tick={{ fontSize: 11 }} unit={unit} domain={yDomain} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#d6d9de" />
+            <XAxis dataKey="t" stroke="#6b7280" tick={{ fontSize: 11 }}
+              label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: '#6b7280', fontSize: 11 }} />
+            <YAxis stroke="#6b7280" tick={{ fontSize: 11 }} unit={unit} domain={yDomain} />
             <Tooltip
-              contentStyle={{ background: '#fff', border: '1px solid #ccc', borderRadius: 6, color: '#222' }}
-              labelStyle={{ color: '#666' }}
+              contentStyle={{ background: '#fff', border: '1px solid #d6d9de', borderRadius: 6, color: '#2a2f3a' }}
+              labelStyle={{ color: '#6b7280' }}
               formatter={val => [`${val.toFixed(1)}${unit}`, label]}
               labelFormatter={t => `t = ${t}s`}
             />
             {gradeCfg && (
               <>
-                <ReferenceArea y1={gradeCfg.avg} y2={gradeCfg.good} fill="#9aa015" fillOpacity={0.14}
-                  label={{ value: 'Average range', position: 'insideTopLeft', fill: '#8a8025', fontSize: 10 }} />
-                <ReferenceArea y1={gradeCfg.good} y2={yDomain[1]} fill="#1a8a4a" fillOpacity={0.14}
-                  label={{ value: 'Elite range', position: 'insideTopLeft', fill: '#1a8a4a', fontSize: 10 }} />
+                <ReferenceArea y1={gradeCfg.avg} y2={gradeCfg.good} fill={GRADE_COLORS.B} fillOpacity={0.14}
+                  label={{ value: 'Average range', position: 'insideTopLeft', fill: GRADE_COLORS.B, fontSize: 10 }} />
+                <ReferenceArea y1={gradeCfg.good} y2={yDomain[1]} fill={GRADE_COLORS.A} fillOpacity={0.14}
+                  label={{ value: 'Elite range', position: 'insideTopLeft', fill: GRADE_COLORS.A, fontSize: 10 }} />
               </>
             )}
             {refLines.map(r => (
               <ReferenceLine key={r.name} x={r.t} stroke={r.color} strokeDasharray="4 2"
                 label={{ value: r.name.replace('_', ' '), fill: r.color, fontSize: 10, position: 'top' }} />
             ))}
-            <ReferenceLine x={currentT} stroke="#222" strokeDasharray="2 2" />
-            {(aggregate === 'range') && <ReferenceLine y={0} stroke="#bbb" />}
+            <ReferenceLine x={currentT} stroke="#2a2f3a" strokeDasharray="2 2" />
+            {(aggregate === 'range') && <ReferenceLine y={0} stroke="#c4c8ce" />}
             <Line type="monotone" dataKey={key} name={label} stroke={color} strokeWidth={2.5} dot={false} />
           </LineChart>
         </ResponsiveContainer>

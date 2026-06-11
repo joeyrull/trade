@@ -3,12 +3,14 @@
 // by MetricsChart's chartData (hip, shoulder, hss, hipSpeed, chestSpeed,
 // armSpeed, elbowAngle, elbowH, trunkTilt).
 
+import { METRIC_COLORS } from '../theme';
+
 export const METRICS_LIBRARY = [
   {
     key: 'hipSpeed',
     label: 'Hip Rotation Speed',
     unit: '°/s',
-    color: '#00c8ff',
+    color: METRIC_COLORS.hipSpeed,
     aggregate: 'max',
     grade: { good: 500, avg: 250 },
     definition:
@@ -26,7 +28,7 @@ export const METRICS_LIBRARY = [
     key: 'chestSpeed',
     label: 'Chest / Shoulder Rotation Speed',
     unit: '°/s',
-    color: '#ffaa00',
+    color: METRIC_COLORS.chestSpeed,
     aggregate: 'max',
     grade: { good: 700, avg: 350 },
     definition:
@@ -44,7 +46,7 @@ export const METRICS_LIBRARY = [
     key: 'armSpeed',
     label: 'Arm Speed (Elbow Extension Rate)',
     unit: '°/s',
-    color: '#ff4444',
+    color: METRIC_COLORS.armSpeed,
     aggregate: 'max',
     grade: { good: 700, avg: 400 },
     definition:
@@ -62,7 +64,7 @@ export const METRICS_LIBRARY = [
     key: 'hss',
     label: 'Hip-Shoulder Separation (X-Factor)',
     unit: '°',
-    color: '#00ff88',
+    color: METRIC_COLORS.hss,
     aggregate: 'max',
     grade: { good: 25, avg: 12 },
     definition:
@@ -81,7 +83,7 @@ export const METRICS_LIBRARY = [
     key: 'hip',
     label: 'Hip Rotation Angle',
     unit: '°',
-    color: '#f0a000',
+    color: METRIC_COLORS.hip,
     aggregate: 'range',
     definition:
       'The orientation of the pelvis relative to home plate over time. Watching this curve shows ' +
@@ -97,7 +99,7 @@ export const METRICS_LIBRARY = [
     key: 'shoulder',
     label: 'Shoulder Rotation Angle',
     unit: '°',
-    color: '#00aaff',
+    color: METRIC_COLORS.shoulder,
     aggregate: 'range',
     definition:
       'The orientation of the shoulder line relative to home plate over time. The gap between this ' +
@@ -113,7 +115,7 @@ export const METRICS_LIBRARY = [
     key: 'elbowH',
     label: 'Elbow Height',
     unit: '% above shoulder',
-    color: '#aa88ff',
+    color: METRIC_COLORS.elbowH,
     aggregate: 'max',
     grade: { good: 5, avg: 0 },
     definition:
@@ -131,7 +133,7 @@ export const METRICS_LIBRARY = [
     key: 'elbowAngle',
     label: 'Elbow Flexion Angle',
     unit: '°',
-    color: '#cc88ff',
+    color: METRIC_COLORS.elbowAngle,
     aggregate: 'range',
     definition:
       'The bend at the elbow joint over time (180° = fully extended, smaller values = more bent). ' +
@@ -147,7 +149,7 @@ export const METRICS_LIBRARY = [
     key: 'trunkTilt',
     label: 'Trunk Tilt',
     unit: '°',
-    color: '#ffaa44',
+    color: METRIC_COLORS.trunkTilt,
     aggregate: 'range',
     definition:
       'The forward/lateral lean of the torso through the delivery. Trunk tilt influences release ' +
