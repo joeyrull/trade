@@ -244,7 +244,10 @@ function PhaseDetail({ summary, frames, onSeek }) {
 
         const avgHss = avg(phaseFrames, f => f.metrics.hip_shoulder_sep);
         const peakSpd = Math.max(...phaseFrames.map(f => Math.abs(f.metrics.arm_speed)));
-        const durationMs = ((end - start) / summary.fps * 1000).toFixed(0);
+        // Real-world duration: for slow-motion clips, motion_fps (the true
+        // capture rate) differs from fps (the slower playback rate), so the
+        // same frame span covers far less real time than fps would suggest.
+        const durationMs = ((end - start) / (summary.motion_fps || summary.fps) * 1000).toFixed(0);
 
         return (
           <div key={name} className="phase-card" onClick={() => onSeek(start)}>

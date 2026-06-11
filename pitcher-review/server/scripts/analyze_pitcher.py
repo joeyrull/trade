@@ -11,8 +11,10 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 import urllib.request
+from fractions import Fraction
 from types import SimpleNamespace
 import cv2
 import mediapipe as mp
@@ -35,6 +37,75 @@ def find_ffmpeg():
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
         return None
+
+
+def find_ffprobe():
+    """Locate an ffprobe binary, mirroring find_ffmpeg()."""
+    path = shutil.which('ffprobe')
+    if path:
+        return path
+    try:
+        import imageio_ffmpeg
+        candidate = os.path.join(os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe()), 'ffprobe')
+        return candidate if os.path.exists(candidate) else None
+    except Exception:
+        return None
+
+
+def detect_frame_rates(video_path, decoded_frames, cap_fps):
+    """Return (playback_fps, motion_fps) for a video.
+
+    cv2's CAP_PROP_FPS reports the container's average frame rate, which for
+    variable-frame-rate slow-motion exports (e.g. an iPhone 240/300fps slow-mo
+    clip muxed for ~30fps playback) can be wildly wrong — neither the rate the
+    player advances frames at nor the rate the footage was captured at, which
+    badly skews every speed/timing metric (and, separately, MediaPipe's
+    detect_for_video timestamps).
+
+    ffprobe exposes both pieces directly:
+      - format.duration combined with the actual decoded frame count gives the
+        true playback rate — what the annotated output video and the UI's
+        time/frame sync should use.
+      - r_frame_rate is the camera's nominal capture rate; when it's
+        substantially higher than the playback rate, the footage is slow
+        motion and real-world speeds/phase timings must be computed against
+        it instead, or they read many times too low (and the delivery's
+        phases collapse into a handful of frames).
+
+    Falls back to (cap_fps, cap_fps) — today's behaviour — if ffprobe is
+    unavailable or the probe doesn't yield usable numbers.
+    """
+    ffprobe = find_ffprobe()
+    if not ffprobe or decoded_frames <= 0:
+        return cap_fps, cap_fps
+
+    try:
+        out = subprocess.run(
+            [ffprobe, '-v', 'error', '-select_streams', 'v:0',
+             '-show_entries', 'stream=r_frame_rate',
+             '-show_entries', 'format=duration',
+             '-of', 'default=noprint_wrappers=1', video_path],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+        info = dict(line.split('=', 1) for line in out.strip().splitlines() if '=' in line)
+        duration = float(info['duration'])
+        r_frame_rate = float(Fraction(info['r_frame_rate']))
+    except Exception:
+        return cap_fps, cap_fps
+
+    if duration <= 0 or r_frame_rate <= 0:
+        return cap_fps, cap_fps
+
+    # A genuine slow-motion capture (120/240/300fps recorded, ~30fps playback)
+    # has a ratio of 4x or more. Ordinary variable-frame-rate footage (e.g. a
+    # screen recording with dropped frames) can land r_frame_rate/playback_fps
+    # around 1.2-1.6x without being slow motion at all — using r_frame_rate
+    # there would inflate every speed by that same factor. 2x sits well below
+    # the slow-mo floor and above realistic VFR drift, so it cleanly separates
+    # the two cases.
+    playback_fps = decoded_frames / duration
+    motion_fps = r_frame_rate if r_frame_rate >= playback_fps * 2.0 else playback_fps
+    return playback_fps, motion_fps
 
 
 # ── Model download ────────────────────────────────────────────────────────────
@@ -645,6 +716,15 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     if n == 0:
         raise ValueError('No frames extracted from video')
 
+    # Recompute fps now that the true decoded frame count is known. `fps`
+    # becomes the playback rate (drives output video timing, the per-frame
+    # `time` field, and UI scrubbing); `motion_fps` is the rate real-world
+    # motion advances at and drives every speed/timing calculation below —
+    # for slow-motion footage these differ by the slow-mo factor (e.g. 10x).
+    fps, motion_fps = detect_frame_rates(video_path, n, fps)
+    for rec in raw:
+        rec['time'] = round(rec['frame'] / fps, 4)
+
     ts_name = f'{throw_side}_shoulder'
     te_name = f'{throw_side}_elbow'
     tw_name = f'{throw_side}_wrist'
@@ -675,13 +755,21 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
         if i == 0:
             rec['_wrist_speed'] = 0.0
         else:
-            rec['_wrist_speed'] = float(np.hypot(twx_p[i] - twx_p[i-1], twy_p[i] - twy_p[i-1]) * fps)
+            rec['_wrist_speed'] = float(np.hypot(twx_p[i] - twx_p[i-1], twy_p[i] - twy_p[i-1]) * motion_fps)
 
     # ── Rotation angles (transverse plane, x-z) ────────────────────────────
     # atan2(dz, dx) is only meaningful when the hip/shoulder line projects to
     # a non-trivial vector; when both dx and dz are near zero, MediaPipe depth
     # noise dominates and the angle swings wildly. Hold the previous angle in
     # that case, then reject any remaining implausible frame-to-frame jumps.
+    # This is a per-decoded-frame outlier-rejection threshold against gross
+    # mis-tracking (MediaPipe locking onto the wrong object), not a real-time
+    # motion bound — it's calibrated against MediaPipe's roughly fixed
+    # per-frame coordinate jitter, so it scales with the *playback* frame
+    # interval (fps) rather than motion_fps. At motion_fps (e.g. 300 for a
+    # 10x slow-mo clip) the equivalent per-frame budget would be a few
+    # degrees, smaller than ordinary landmark jitter, and would flag almost
+    # every frame as low-confidence.
     max_rot_jump = 1200.0 / fps  # deg/frame ≈ 1200 deg/s cap
 
     def rotation_series(p1x, p1z, p2x, p2z, p1_ok, p2_ok):
@@ -760,17 +848,17 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     # signal, so displayed angles and reported speeds stay consistent, and the
     # result is frame-rate independent (the old fixed-window smoothing left the
     # peak speeds reading up to ~2x high on 240fps footage — see lowpass).
-    hip_s   = lowpass(hip_angs,   fps, ROT_CUTOFF_HZ)
-    sho_s   = lowpass(sho_angs,   fps, ROT_CUTOFF_HZ)
-    trunk_s = lowpass(trunk_angs, fps, ROT_CUTOFF_HZ)
+    hip_s   = lowpass(hip_angs,   motion_fps, ROT_CUTOFF_HZ)
+    sho_s   = lowpass(sho_angs,   motion_fps, ROT_CUTOFF_HZ)
+    trunk_s = lowpass(trunk_angs, motion_fps, ROT_CUTOFF_HZ)
     # Arm speed = elbow extension/flexion rate. Unlike the angle of the
     # shoulder->wrist vector, this doesn't blow up under foreshortening: the
     # 3-point angle is bounded to [0, 180] deg, so its derivative can't sweep
     # through a near-360 deg discontinuity the way a 2D vector angle can.
-    elbow_s = lowpass(elbow_angs, fps, ARM_CUTOFF_HZ)
-    hip_vel   = derivative(hip_s,   fps)
-    chest_vel = derivative(sho_s,   fps)
-    arm_vel   = derivative(elbow_s, fps)
+    elbow_s = lowpass(elbow_angs, motion_fps, ARM_CUTOFF_HZ)
+    hip_vel   = derivative(hip_s,   motion_fps)
+    chest_vel = derivative(sho_s,   motion_fps)
+    arm_vel   = derivative(elbow_s, motion_fps)
 
     # Per-frame metrics
     for i, rec in enumerate(raw):
@@ -800,7 +888,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
 
     # Phases
     wrist_speed = [r['_wrist_speed'] for r in raw]
-    phases = detect_phases(lay.tolist(), tey.tolist(), wrist_speed, fps)
+    phases = detect_phases(lay.tolist(), tey.tolist(), wrist_speed, motion_fps)
     for i, rec in enumerate(raw):
         rec['phase'] = phase_for_frame(phases, i)
 
@@ -821,7 +909,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     # a physically impossible ~2500 deg/s and even inverted the hip->chest->arm
     # sequencing). Per-metric validity masks keep each peak on frames where
     # *that* measurement was trustworthy, rather than the global low-conf union.
-    sec = lambda s: int(round(s * fps))
+    sec = lambda s: int(round(s * motion_fps))
     rot_lo  = max(0, fs_f - sec(0.10))   # hips can fire just before foot strike
     spd_hi  = min(n - 1, release_f + sec(0.15))
     arm_hi  = min(n - 1, release_f + sec(0.20))
@@ -867,6 +955,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
 
     summary = {
         'fps': round(fps, 2),
+        'motion_fps': round(motion_fps, 2),
         'total_frames': n,
         'duration_s': round(n / fps, 3),
         'throw_hand': throw_hand,
@@ -910,9 +999,9 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
             'hip_peak_frame':    hip_peak_f,
             'chest_peak_frame':  chest_peak_f,
             'arm_peak_frame':    arm_peak_f,
-            'hip_to_chest_ms':   round((chest_peak_f - hip_peak_f) / fps * 1000, 1),
-            'chest_to_arm_ms':   round((arm_peak_f - chest_peak_f) / fps * 1000, 1),
-            'hip_to_arm_ms':     round((arm_peak_f - hip_peak_f) / fps * 1000, 1),
+            'hip_to_chest_ms':   round((chest_peak_f - hip_peak_f) / motion_fps * 1000, 1),
+            'chest_to_arm_ms':   round((arm_peak_f - chest_peak_f) / motion_fps * 1000, 1),
+            'hip_to_arm_ms':     round((arm_peak_f - hip_peak_f) / motion_fps * 1000, 1),
             'proper_order':      hip_peak_f <= chest_peak_f <= arm_peak_f,
             'low_confidence':    bool(hip_peak_lc or chest_peak_lc or arm_peak_lc),
         },

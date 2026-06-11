@@ -86,10 +86,15 @@ function TrackingQualityBanner({ quality, phaseConfidence, autoZoom }) {
 }
 
 export default function SummaryReport({ summary, frames }) {
-  const { peak, key_frames, phases, fps, duration_s, throw_hand, sequencing,
+  const { peak, key_frames, phases, fps, motion_fps, duration_s, throw_hand, sequencing,
           tracking_quality, phase_confidence, auto_zoom } = summary;
 
   if (!peak) return <p style={{ color: 'var(--text-muted)', padding: 24 }}>No summary data available.</p>;
+
+  // Real-world frame rate: for slow-motion clips, motion_fps (the true
+  // capture rate) is much higher than fps (the slower playback rate), so
+  // real-world durations must be computed against it, not fps.
+  const mfps = motion_fps || fps;
 
   const maxArmSpeed   = peak.max_arm_speed || 0;
   const maxHipSpeed   = peak.max_hip_rotation_speed || 0;
@@ -100,9 +105,9 @@ export default function SummaryReport({ summary, frames }) {
   const merF        = key_frames?.max_ext_rot ?? 0;
 
   // Time from foot strike to release (should be ~0.1–0.2s for elite)
-  const fsToRelease = ((releaseF - fsF) / fps * 1000).toFixed(0);
+  const fsToRelease = ((releaseF - fsF) / mfps * 1000).toFixed(0);
   // Time from MER to release (arm acceleration window)
-  const merToRelease = ((releaseF - merF) / fps * 1000).toFixed(0);
+  const merToRelease = ((releaseF - merF) / mfps * 1000).toFixed(0);
 
   const releaseFrame = frames[releaseF] || {};
   const fsFrame      = frames[fsF] || {};
@@ -217,11 +222,11 @@ export default function SummaryReport({ summary, frames }) {
             then the chest, then the arm — each link transferring energy to the next.
           </p>
           <div className="sequence-row">
-            <SequenceNode label="Hip Peak"   ms={(sequencing.hip_peak_frame / fps * 1000).toFixed(0)} color={METRIC_COLORS.hipSpeed} />
+            <SequenceNode label="Hip Peak"   ms={(sequencing.hip_peak_frame / mfps * 1000).toFixed(0)} color={METRIC_COLORS.hipSpeed} />
             <SequenceArrow ms={sequencing.hip_to_chest_ms} ok={sequencing.hip_to_chest_ms >= 0} />
-            <SequenceNode label="Chest Peak" ms={(sequencing.chest_peak_frame / fps * 1000).toFixed(0)} color={METRIC_COLORS.chestSpeed} />
+            <SequenceNode label="Chest Peak" ms={(sequencing.chest_peak_frame / mfps * 1000).toFixed(0)} color={METRIC_COLORS.chestSpeed} />
             <SequenceArrow ms={sequencing.chest_to_arm_ms} ok={sequencing.chest_to_arm_ms >= 0} />
-            <SequenceNode label="Arm Peak"   ms={(sequencing.arm_peak_frame / fps * 1000).toFixed(0)} color={METRIC_COLORS.armSpeed} />
+            <SequenceNode label="Arm Peak"   ms={(sequencing.arm_peak_frame / mfps * 1000).toFixed(0)} color={METRIC_COLORS.armSpeed} />
           </div>
           <div className="sequence-verdict">
             {sequencing.low_confidence ? (
