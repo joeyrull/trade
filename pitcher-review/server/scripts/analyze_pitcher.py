@@ -314,17 +314,30 @@ def build_robust_series(raw, name, min_vis=MIN_VISIBILITY, max_jump=MAX_POS_JUMP
 def filter_angle_series(angles, valid, max_jump_deg):
     """Hold the previous angle for any frame already flagged invalid, or
     whose frame-to-frame change exceeds a physically plausible bound.
+
+    The bound scales with the number of consecutive held frames so far:
+    a long run of held frames means `out[i-1]` is a stale comparison
+    baseline, and the true angle may have drifted proportionally further
+    during the gap. Without this scaling, one false rejection freezes
+    `out` at a stale value indefinitely, since every later frame then gets
+    compared against that same stale value too.
+
     Returns (angles, still_valid)."""
     out = list(angles)
     ok = list(valid)
+    held = 0
     for i in range(1, len(out)):
         if not ok[i]:
             out[i] = out[i - 1]
+            held += 1
             continue
-        d = (out[i] - out[i - 1] + 180) % 360 - 180
-        if abs(d) > max_jump_deg:
+        d = (angles[i] - out[i - 1] + 180) % 360 - 180
+        if abs(d) > max_jump_deg * (held + 1):
             out[i] = out[i - 1]
             ok[i] = False
+            held += 1
+        else:
+            held = 0
     return out, ok
 
 
