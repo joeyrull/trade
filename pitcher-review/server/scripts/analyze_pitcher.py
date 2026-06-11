@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import cv2
 import mediapipe as mp
 import numpy as np
-from scipy.signal import savgol_filter
+from scipy.signal import savgol_filter, butter, filtfilt
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
@@ -103,6 +103,15 @@ MIN_ROT_VEC_MAG  = 0.035 # min |hip/shoulder line vector| (x-z plane) to trust i
 MIN_LIMB_VEC_MAG = 0.04  # min |upper-arm or forearm| (x-y plane) to trust the elbow angle
 MIN_MASK_CONF    = 0.4   # min person-segmentation confidence to trust a landmark there
 
+# ── Velocity filtering (Winter-style zero-lag Butterworth, see lowpass) ──────
+# Cutoffs are real frequencies (Hz), so the same physical noise band is rejected
+# regardless of frame rate. Arm (elbow-extension) peaks are the sharpest/fastest
+# yet cleanest signal, so they keep a wider band; the depth-derived hip/shoulder
+# rotation angles are noisier and their true peaks broader, so they're filtered
+# harder. Tuned on synthetic pitching signals across 24-240fps.
+ARM_CUTOFF_HZ = 14.0  # elbow-extension rate (arm speed)
+ROT_CUTOFF_HZ = 6.0   # hip / shoulder rotation speed, trunk tilt
+
 # ── Background blur ──────────────────────────────────────────────────────────
 MASK_DOWNSCALE_W = 320  # width (px) to downsample segmentation masks to before storing
 BG_BLUR_KSIZE    = 45   # Gaussian blur kernel size (odd) applied to background pixels
@@ -139,12 +148,38 @@ def smooth(arr, window=7, poly=3):
     return savgol_filter(arr, w, poly).tolist()
 
 
-def angular_velocity(angles_deg, fps, window=7):
-    a = np.unwrap(np.deg2rad(angles_deg))
-    vel = np.gradient(np.rad2deg(a), 1.0 / fps)
-    if len(vel) > window + 2:
-        vel = savgol_filter(vel, window | 1, 3)
-    return vel.tolist()
+def lowpass(series, fps, cutoff_hz, order=2):
+    """Zero-lag (forward-backward) Butterworth low-pass filter.
+
+    The cutoff is a real frequency in Hz, so the filter rejects the same
+    physical noise band no matter the frame rate — unlike a fixed-sample-count
+    smoother, whose effective cutoff scales with fps and leaves high-fps footage
+    badly under-filtered (at 240fps the old gradient-then-savgol velocity read a
+    hip rotation ~2x faster than the same motion shot at 30fps, purely from
+    differentiation noise). filtfilt is zero-phase, so peak *timing* is
+    preserved — important for the kinetic-chain sequencing metric.
+
+    Falls back to the raw series when there are too few samples to filter
+    stably; clamps the cutoff just under Nyquist so low-fps clips still filter.
+    """
+    x = np.asarray(series, dtype=float)
+    n = len(x)
+    if n < 8:
+        return x.tolist()
+    wn = min(cutoff_hz / (fps / 2.0), 0.9)
+    b, a = butter(order, wn)
+    padlen = 3 * (max(len(a), len(b)) - 1)
+    if n <= padlen:
+        return x.tolist()
+    return filtfilt(b, a, x).tolist()
+
+
+def derivative(series, fps):
+    """Central-difference time derivative (units/sec). Apply to an already
+    low-passed series (see lowpass): differentiating raw landmark-derived
+    angles amplifies high-frequency jitter, and the amplification grows with
+    fps (noise/Δt), which is what skewed the old peak-speed numbers."""
+    return np.gradient(np.asarray(series, dtype=float), 1.0 / fps).tolist()
 
 
 def mask_confidence(mask_small, x, y):
@@ -671,17 +706,22 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
         sho_mx, sho_my = (lsx[i] + rsx[i]) / 2, (lsy[i] + rsy[i]) / 2
         trunk_angs.append(float(np.degrees(np.arctan2(sho_mx - hip_mx, hip_my - sho_my))))
 
-    hip_s   = smooth(hip_angs,   window=9)
-    sho_s   = smooth(sho_angs,   window=9)
-    elbow_s = smooth(elbow_angs, window=7)
-    trunk_s = smooth(trunk_angs, window=9)
-    hip_vel   = angular_velocity(hip_s, fps, window=9)
-    chest_vel = angular_velocity(sho_s, fps, window=9)
+    # Low-pass each angle at a fixed cutoff frequency, then differentiate the
+    # filtered series. Filtering and differentiation share the same smoothed
+    # signal, so displayed angles and reported speeds stay consistent, and the
+    # result is frame-rate independent (the old fixed-window smoothing left the
+    # peak speeds reading up to ~2x high on 240fps footage — see lowpass).
+    hip_s   = lowpass(hip_angs,   fps, ROT_CUTOFF_HZ)
+    sho_s   = lowpass(sho_angs,   fps, ROT_CUTOFF_HZ)
+    trunk_s = lowpass(trunk_angs, fps, ROT_CUTOFF_HZ)
     # Arm speed = elbow extension/flexion rate. Unlike the angle of the
     # shoulder->wrist vector, this doesn't blow up under foreshortening: the
     # 3-point angle is bounded to [0, 180] deg, so its derivative can't sweep
     # through a near-360 deg discontinuity the way a 2D vector angle can.
-    arm_vel = angular_velocity(elbow_s, fps, window=7)
+    elbow_s = lowpass(elbow_angs, fps, ARM_CUTOFF_HZ)
+    hip_vel   = derivative(hip_s,   fps)
+    chest_vel = derivative(sho_s,   fps)
+    arm_vel   = derivative(elbow_s, fps)
 
     # Per-frame metrics
     for i, rec in enumerate(raw):
