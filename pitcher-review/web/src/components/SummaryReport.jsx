@@ -224,7 +224,12 @@ export default function SummaryReport({ summary, frames }) {
             <SequenceNode label="Arm Peak"   ms={(sequencing.arm_peak_frame / fps * 1000).toFixed(0)} color={METRIC_COLORS.armSpeed} />
           </div>
           <div className="sequence-verdict">
-            {sequencing.proper_order ? (
+            {sequencing.low_confidence ? (
+              <span className="obs-warn-inline">
+                ~ Sequencing uncertain — one or more peak speeds couldn't be tracked reliably (often the
+                throwing arm foreshortening on a side view), so the firing order isn't conclusive here.
+              </span>
+            ) : sequencing.proper_order ? (
               <span className="obs-good-inline">
                 ✓ Proper sequence — hips lead, chest follows, arm finishes ({sequencing.hip_to_arm_ms}ms hip-to-arm).
               </span>
@@ -279,7 +284,7 @@ export default function SummaryReport({ summary, frames }) {
               Arm lingers at max external rotation — consider a more explosive transition.
             </li>
           )}
-          {sequencing && !sequencing.proper_order && (
+          {sequencing && !sequencing.proper_order && !sequencing.low_confidence && (
             <li className="obs-warn">
               <strong>Out-of-sequence kinetic chain:</strong>{' '}
               Hip, chest, and arm rotation speeds aren't peaking in the hip → chest → arm order.
@@ -287,7 +292,7 @@ export default function SummaryReport({ summary, frames }) {
               to build separation, reducing the whip effect and adding arm strain.
             </li>
           )}
-          {sequencing && sequencing.proper_order && sequencing.hip_to_arm_ms < 150 && (
+          {sequencing && sequencing.proper_order && !sequencing.low_confidence && sequencing.hip_to_arm_ms < 150 && (
             <li className="obs-good">
               <strong>Tight, well-sequenced delivery ({sequencing.hip_to_arm_ms}ms hip-to-arm):</strong>{' '}
               Energy transfers quickly from hips to arm — a hallmark of efficient, high-velocity mechanics.

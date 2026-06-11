@@ -100,7 +100,6 @@ SKELETON_CONNECTIONS = [
 MIN_VISIBILITY   = 0.5   # landmark visibility below this is not trusted
 MAX_POS_JUMP     = 0.15  # max plausible frame-to-frame landmark move (normalized coords)
 MIN_ROT_VEC_MAG  = 0.035 # min |hip/shoulder line vector| (x-z plane) to trust its angle
-MIN_LIMB_VEC_MAG = 0.04  # min |upper-arm or forearm| (x-y plane) to trust the elbow angle
 MIN_MASK_CONF    = 0.4   # min person-segmentation confidence to trust a landmark there
 
 # ── Velocity filtering (Winter-style zero-lag Butterworth, see lowpass) ──────
@@ -138,6 +137,20 @@ def angle_3pt(ax, ay, bx, by, cx, cy):
     return float(np.degrees(np.arccos(np.clip(dot / mag, -1.0, 1.0))))
 
 
+def angle_3pt_3d(ax, ay, az, bx, by, bz, cx, cy, cz):
+    """3D angle at B between BA and BC (degrees). Used for the elbow angle from
+    MediaPipe *world* landmarks: a 3D joint angle stays well-conditioned even
+    when the limb points toward/away from the camera, whereas the 2D image-plane
+    angle degenerates under that foreshortening (which is exactly how a side-view
+    camera sees the throwing arm through cocking and release)."""
+    ba = (ax - bx, ay - by, az - bz)
+    bc = (cx - bx, cy - by, cz - bz)
+    dot = ba[0]*bc[0] + ba[1]*bc[1] + ba[2]*bc[2]
+    mag = ((ba[0]**2+ba[1]**2+ba[2]**2)**0.5
+           * (bc[0]**2+bc[1]**2+bc[2]**2)**0.5 + 1e-9)
+    return float(np.degrees(np.arccos(np.clip(dot / mag, -1.0, 1.0))))
+
+
 def smooth(arr, window=7, poly=3):
     if len(arr) < window + 2:
         return list(arr)
@@ -166,7 +179,11 @@ def lowpass(series, fps, cutoff_hz, order=2):
     n = len(x)
     if n < 8:
         return x.tolist()
-    wn = min(cutoff_hz / (fps / 2.0), 0.9)
+    # Cap the normalized cutoff at half-Nyquist. Frequencies above that are
+    # mostly differentiation noise, and the cap matters at low frame rates: at
+    # 30fps a nominal 14Hz arm cutoff would sit at 0.93*Nyquist and filter
+    # almost nothing, leaving the elbow-extension velocity dominated by jitter.
+    wn = min(cutoff_hz / (fps / 2.0), 0.5)
     b, a = butter(order, wn)
     padlen = 3 * (max(len(a), len(b)) - 1)
     if n <= padlen:
@@ -574,6 +591,11 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
             else:
                 lm_list = result.pose_landmarks[0]
 
+        # World landmarks: metric, body-centred 3D coordinates. They're
+        # independent of the crop (not in image space), so they need no ROI
+        # remapping, and they give a foreshortening-robust 3D elbow angle.
+        wl_list = result.pose_world_landmarks[0] if result.pose_world_landmarks else None
+
         mask_small = None
         if result.segmentation_masks:
             mask = result.segmentation_masks[0].numpy_view()
@@ -594,6 +616,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
             '_mask_small':     mask_small,
             '_wrist_speed':    0.0,
             'landmarks': {},
+            'world':     {},
         }
 
         if lm_list:
@@ -605,6 +628,9 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
                     'z': round(lm.z, 5),
                     'v': round(getattr(lm, 'visibility', 1.0), 3),
                 }
+                if wl_list is not None:
+                    wlm = wl_list[idx]
+                    rec['world'][name] = {'x': wlm.x, 'y': wlm.y, 'z': wlm.z}
 
         raw.append(rec)
         frame_num += 1
@@ -682,19 +708,41 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
     hip_angs = np.degrees(np.unwrap(np.deg2rad(hip_angs))).tolist()
     sho_angs = np.degrees(np.unwrap(np.deg2rad(sho_angs))).tolist()
 
-    # ── Elbow angle, trunk tilt (image-plane geometry, x-y) ────────────────
-    # The 3-point elbow angle itself is well-conditioned, but its *direction*
-    # becomes noise if either the upper-arm or forearm projects to a near-zero
-    # 2D vector (forearm pointing straight at/away from the camera). Hold the
-    # previous angle in that case.
+    # ── Elbow angle (3D world landmarks) ───────────────────────────────────
+    # The throwing arm foreshortens badly on a side-view camera through cocking
+    # and release (it points toward/away from the lens), which collapses the 2D
+    # image-plane elbow angle to noise — the single biggest error source for
+    # arm speed on real footage. MediaPipe's metric world landmarks give a 3D
+    # elbow angle that stays well-conditioned under that foreshortening; on test
+    # footage it roughly halved the frame-to-frame jitter through the delivery.
+    # Fall back to the 2D angle if a model build doesn't emit world landmarks.
+    has_world = any(rec['world'] for rec in raw)
+
+    def world_track(name, valid):
+        """Hold the last visibility-trusted world position across untrusted
+        frames, mirroring build_robust_series but for the 3D world coords."""
+        xs = np.zeros(n); ys = np.zeros(n); zs = np.zeros(n); last = None
+        for i, rec in enumerate(raw):
+            w = rec['world'].get(name)
+            if w is not None and (valid[i] or last is None):
+                last = (w['x'], w['y'], w['z'])
+            if last is not None:
+                xs[i], ys[i], zs[i] = last
+        return xs, ys, zs
+
+    wsx, wsy, wsz = world_track(ts_name, ts_ok)
+    wex, wey, wez = world_track(te_name, te_ok)
+    wwx, wwy, wwz = world_track(tw_name, tw_ok)
+
     elbow_angs, elbow_ok, trunk_angs = [], [], []
     for i in range(n):
-        ux, uy = tex[i] - tsx[i], tey[i] - tsy[i]
-        fx, fy = twx[i] - tex[i], twy[i] - tey[i]
-        umag, fmag = (ux*ux+uy*uy) ** 0.5, (fx*fx+fy*fy) ** 0.5
-        ok = bool(ts_ok[i] and te_ok[i] and tw_ok[i]
-                  and umag >= MIN_LIMB_VEC_MAG and fmag >= MIN_LIMB_VEC_MAG)
-        ang = angle_3pt(tsx[i], tsy[i], tex[i], tey[i], twx[i], twy[i])
+        ok = bool(ts_ok[i] and te_ok[i] and tw_ok[i])
+        if has_world:
+            ang = angle_3pt_3d(wsx[i], wsy[i], wsz[i],
+                               wex[i], wey[i], wez[i],
+                               wwx[i], wwy[i], wwz[i])
+        else:
+            ang = angle_3pt(tsx[i], tsy[i], tex[i], tey[i], twx[i], twy[i])
         if not ok and elbow_angs:
             ang = elbow_angs[-1]
         elbow_angs.append(ang)
@@ -763,20 +811,50 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
     release_f  = phases.get('release',      (0, 0))[0]
     mer_f      = phases.get('acceleration', (0, 0))[0]
     fs_f       = phases.get('foot_strike',  (0, 0))[0]
+    ss_f       = phases.get('stride',       (0, 0))[0]
 
-    def best_peak(values):
-        """argmax restricted to high-confidence frames when any exist;
-        otherwise fall back to all frames and flag the result."""
-        hi = [i for i in range(n) if not low_conf[i]]
-        if hi:
-            idx = max(hi, key=lambda i: values[i])
-            return idx, False
+    # Peak-search windows. Every peak the kinetic chain produces fires between
+    # the lead foot planting and shortly after release, so restrict the search
+    # to that span. This is what stops a foreshortened-arm glitch back in the
+    # windup from being reported as the "peak" arm speed (it previously surfaced
+    # a physically impossible ~2500 deg/s and even inverted the hip->chest->arm
+    # sequencing). Per-metric validity masks keep each peak on frames where
+    # *that* measurement was trustworthy, rather than the global low-conf union.
+    sec = lambda s: int(round(s * fps))
+    rot_lo  = max(0, fs_f - sec(0.10))   # hips can fire just before foot strike
+    spd_hi  = min(n - 1, release_f + sec(0.15))
+    arm_hi  = min(n - 1, release_f + sec(0.20))
+    valid_arm = elbow_ok
+    valid_rot = [bool(hip_ang_ok[i] and sho_ang_ok[i]) for i in range(n)]
+    PEAK_MIN_VALID_FRAC = 0.34  # below this, the window was too untracked to trust
+
+    def best_peak(values, valid, lo, hi):
+        """argmax of values over [lo, hi], restricted to trustworthy frames.
+
+        A frame only qualifies if it *and both immediate neighbours* are valid —
+        this rejects the one-frame velocity spikes thrown off when tracking pops
+        back in mid-delivery (a foreshortened throwing arm snapping into view
+        previously produced an impossible ~2500 deg/s "peak"). The result is
+        flagged low-confidence when the search window was mostly untracked, so a
+        delivery whose actual acceleration phase couldn't be seen reports an
+        honest "uncertain" rather than whatever lone artifact survived."""
+        lo, hi = max(0, lo), min(n - 1, hi)
+        win = list(range(lo, hi + 1))
+        dens = (sum(1 for i in win if valid[i]) / len(win)) if win else 0.0
+        def neigh_ok(i):
+            return valid[i] and (i == 0 or valid[i-1]) and (i == n-1 or valid[i+1])
+        cand = [i for i in win if neigh_ok(i)] or [i for i in win if valid[i]]
+        if cand:
+            return max(cand, key=lambda i: values[i]), bool(dens < PEAK_MIN_VALID_FRAC)
+        cand = [i for i in range(n) if valid[i]]
+        if cand:
+            return max(cand, key=lambda i: values[i]), True
         return int(np.argmax(values)), True
 
-    arm_peak_f,   arm_peak_lc   = best_peak(arm_speeds)
-    hip_peak_f,   hip_peak_lc   = best_peak(hip_speeds)
-    chest_peak_f, chest_peak_lc = best_peak(chest_speeds)
-    hss_peak_f,   hss_peak_lc   = best_peak(hss_vals)
+    arm_peak_f,   arm_peak_lc   = best_peak(arm_speeds,   valid_arm, fs_f,   arm_hi)
+    hip_peak_f,   hip_peak_lc   = best_peak(hip_speeds,   valid_rot, rot_lo, spd_hi)
+    chest_peak_f, chest_peak_lc = best_peak(chest_speeds, valid_rot, rot_lo, spd_hi)
+    hss_peak_f,   hss_peak_lc   = best_peak(hss_vals,     valid_rot, ss_f,   spd_hi)
 
     # Per-phase tracking confidence — surfaces *where* in the delivery the
     # pose tracking was/wasn't trustworthy, since an overall percentage can
@@ -814,9 +892,9 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
             'max_hss_frame':          hss_peak_f,
             'max_hss_low_confidence': hss_peak_lc,
             'arm_speed_at_release':   round(arm_speeds[release_f], 1) if release_f < n else 0,
-            'arm_speed_at_release_low_confidence': bool(low_conf[release_f]) if release_f < n else False,
+            'arm_speed_at_release_low_confidence': (not valid_arm[release_f]) if release_f < n else False,
             'hss_at_foot_strike':     round(hss_vals[fs_f], 1),
-            'hss_at_foot_strike_low_confidence': bool(low_conf[fs_f]),
+            'hss_at_foot_strike_low_confidence': bool(not valid_rot[fs_f]),
         },
         'key_frames': {
             'foot_strike':  int(fs_f),
@@ -824,7 +902,9 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
             'release':      int(release_f),
         },
         # Kinetic-chain sequencing: efficient deliveries fire hips, then chest,
-        # then arm — each peak progressively later, like links in a whip.
+        # then arm — each peak progressively later, like links in a whip. The
+        # ordering is only meaningful when each peak it depends on was measured
+        # on a trustworthy frame, so it carries its own low-confidence flag.
         'sequencing': {
             'hip_peak_frame':    hip_peak_f,
             'chest_peak_frame':  chest_peak_f,
@@ -833,6 +913,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None, b
             'chest_to_arm_ms':   round((arm_peak_f - chest_peak_f) / fps * 1000, 1),
             'hip_to_arm_ms':     round((arm_peak_f - hip_peak_f) / fps * 1000, 1),
             'proper_order':      hip_peak_f <= chest_peak_f <= arm_peak_f,
+            'low_confidence':    bool(hip_peak_lc or chest_peak_lc or arm_peak_lc),
         },
     }
 
