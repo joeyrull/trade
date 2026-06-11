@@ -172,6 +172,10 @@ MIN_VISIBILITY   = 0.5   # landmark visibility below this is not trusted
 MAX_POS_JUMP     = 0.15  # max plausible frame-to-frame landmark move (normalized coords)
 MIN_ROT_VEC_MAG  = 0.035 # min |hip/shoulder line vector| (x-z plane) to trust its angle
 MIN_MASK_CONF    = 0.4   # min person-segmentation confidence to trust a landmark there
+MAX_INTERP_GAP_S = 0.1   # gaps in tracking shorter than this are linearly interpolated
+                         # between the surrounding trusted samples rather than held flat;
+                         # longer gaps are left held since the true value likely drifted
+                         # too far to estimate from a straight line.
 
 # ── Velocity filtering (Winter-style zero-lag Butterworth, see lowpass) ──────
 # Cutoffs are real frequencies (Hz), so the same physical noise band is rejected
@@ -283,12 +287,39 @@ def mask_confidence(mask_small, x, y):
     return mask_small[my, mx] / 255.0
 
 
-def build_robust_series(raw, name, min_vis=MIN_VISIBILITY, max_jump=MAX_POS_JUMP, min_mask=MIN_MASK_CONF):
+def fill_short_gaps(valid, max_gap, fill):
+    """Find runs where `valid` is False, bounded by trusted (`valid` True)
+    samples on both sides, with length <= max_gap, and call `fill(i, j)` for
+    each — the run spans indices [i, j) and is bounded by trusted samples
+    i-1 and j. Marks filled indices valid in place. Runs touching either end
+    of the series have no second bound and are left for the caller's
+    hold-last/first-value behavior."""
+    n = len(valid)
+    i = 0
+    while i < n:
+        if valid[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and not valid[j]:
+            j += 1
+        if i > 0 and j < n and (j - i) <= max_gap:
+            fill(i, j)
+            for k in range(i, j):
+                valid[k] = True
+        i = j
+    return valid
+
+
+def build_robust_series(raw, name, min_vis=MIN_VISIBILITY, max_jump=MAX_POS_JUMP, min_mask=MIN_MASK_CONF, max_gap=0):
     """Track a landmark's (x, y, z) across frames, holding the last trusted
     position whenever the landmark is missing, low-visibility, falls outside
     the person segmentation mask, or jumps implausibly far in a single frame
     (signs MediaPipe has locked onto the wrong object, e.g. background
-    clutter). Returns (xs, ys, zs, valid)."""
+    clutter). Gaps of `max_gap` frames or fewer between trusted samples are
+    linearly interpolated instead of held flat, since a brief dropout is
+    usually MediaPipe jitter and the true position likely moved smoothly
+    across it. Returns (xs, ys, zs, valid)."""
     n = len(raw)
     xs = np.zeros(n); ys = np.zeros(n); zs = np.zeros(n)
     valid = np.zeros(n, dtype=bool)
@@ -308,10 +339,20 @@ def build_robust_series(raw, name, min_vis=MIN_VISIBILITY, max_jump=MAX_POS_JUMP
             last = (lm['x'], lm['y'], lm['z'])
         if last is not None:
             xs[i], ys[i], zs[i] = last
+
+    def fill(i, j):
+        span = j - i + 1
+        for k in range(i, j):
+            t = (k - i + 1) / span
+            xs[k] = xs[i - 1] + (xs[j] - xs[i - 1]) * t
+            ys[k] = ys[i - 1] + (ys[j] - ys[i - 1]) * t
+            zs[k] = zs[i - 1] + (zs[j] - zs[i - 1]) * t
+
+    fill_short_gaps(valid, max_gap, fill)
     return xs, ys, zs, valid
 
 
-def filter_angle_series(angles, valid, max_jump_deg):
+def filter_angle_series(angles, valid, max_jump_deg, max_gap=0):
     """Hold the previous angle for any frame already flagged invalid, or
     whose frame-to-frame change exceeds a physically plausible bound.
 
@@ -321,6 +362,9 @@ def filter_angle_series(angles, valid, max_jump_deg):
     during the gap. Without this scaling, one false rejection freezes
     `out` at a stale value indefinitely, since every later frame then gets
     compared against that same stale value too.
+
+    Gaps of `max_gap` frames or fewer between trusted angles are then
+    interpolated along the shortest angular path instead of held flat.
 
     Returns (angles, still_valid)."""
     out = list(angles)
@@ -338,6 +382,15 @@ def filter_angle_series(angles, valid, max_jump_deg):
             held += 1
         else:
             held = 0
+
+    def fill(i, j):
+        span = j - i + 1
+        d = (out[j] - out[i - 1] + 180) % 360 - 180
+        for k in range(i, j):
+            t = (k - i + 1) / span
+            out[k] = out[i - 1] + d * t
+
+    fill_short_gaps(ok, max_gap, fill)
     return out, ok
 
 
@@ -744,18 +797,23 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     lead_side = 'right' if throw_hand == 'left' else 'left'
     la_name = f'{lead_side}_ankle'
 
+    # Express the short-gap interpolation window in real time so it covers
+    # the same span of motion regardless of frame rate.
+    max_gap = max(0, round(motion_fps * MAX_INTERP_GAP_S))
+
     # ── Robust landmark tracks ─────────────────────────────────────────────
     # Hold the last trusted position whenever a landmark is missing,
     # low-visibility, or jumps implausibly far in one frame (a sign
     # MediaPipe has locked onto the wrong object, e.g. background clutter).
-    lhx, lhy, lhz, lh_ok = build_robust_series(raw, 'left_hip')
-    rhx, rhy, rhz, rh_ok = build_robust_series(raw, 'right_hip')
-    lsx, lsy, lsz, ls_ok = build_robust_series(raw, 'left_shoulder')
-    rsx, rsy, rsz, rs_ok = build_robust_series(raw, 'right_shoulder')
-    tex, tey, tez, te_ok = build_robust_series(raw, te_name)
-    twx, twy, twz, tw_ok = build_robust_series(raw, tw_name)
-    tsx, tsy, tsz, ts_ok = build_robust_series(raw, ts_name)
-    _, lay, _, _ = build_robust_series(raw, la_name)
+    # Short gaps (<= max_gap frames) are interpolated rather than held flat.
+    lhx, lhy, lhz, lh_ok = build_robust_series(raw, 'left_hip', max_gap=max_gap)
+    rhx, rhy, rhz, rh_ok = build_robust_series(raw, 'right_hip', max_gap=max_gap)
+    lsx, lsy, lsz, ls_ok = build_robust_series(raw, 'left_shoulder', max_gap=max_gap)
+    rsx, rsy, rsz, rs_ok = build_robust_series(raw, 'right_shoulder', max_gap=max_gap)
+    tex, tey, tez, te_ok = build_robust_series(raw, te_name, max_gap=max_gap)
+    twx, twy, twz, tw_ok = build_robust_series(raw, tw_name, max_gap=max_gap)
+    tsx, tsy, tsz, ts_ok = build_robust_series(raw, ts_name, max_gap=max_gap)
+    _, lay, _, _ = build_robust_series(raw, la_name, max_gap=max_gap)
 
     low_conf = [not (lh_ok[i] and rh_ok[i] and ls_ok[i] and rs_ok[i]
                       and te_ok[i] and tw_ok[i] and ts_ok[i])
@@ -797,7 +855,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
                 ang = raw_angs[-1] if raw_angs else float(np.degrees(np.arctan2(dz, dx)))
             raw_angs.append(ang)
             valid.append(ok)
-        return filter_angle_series(raw_angs, valid, max_rot_jump)
+        return filter_angle_series(raw_angs, valid, max_rot_jump, max_gap=max_gap)
 
     hip_angs, hip_ang_ok = rotation_series(lhx, lhz, rhx, rhz, lh_ok, rh_ok)
     sho_angs, sho_ang_ok = rotation_series(lsx, lsz, rsx, rsz, ls_ok, rs_ok)
