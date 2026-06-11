@@ -4,9 +4,9 @@ Cross-camera metric fusion (post-processing step).
 
 Given two analyze_pitcher.py metrics.json outputs for the same pitch shot
 from different angles, plus the time offset between their clocks (from the
-existing release-frame sync in analysis.js), fill each frame's
-low-confidence metrics using the other camera's data at the corresponding
-instant, where the other camera was confident:
+sync computed in analysis.js, refined via cross-correlation), fill each
+frame's low-confidence metrics using the other camera's data at the
+corresponding instant, where the other camera was confident:
 
 - elbow_angle is a 3D joint angle (computed from MediaPipe world
   landmarks), so it's camera-orientation-invariant and can be substituted
@@ -22,8 +22,10 @@ instant, where the other camera was confident:
 Usage:
   python3 fuse_cameras.py <self_metrics.json> <other_metrics.json> <offset_seconds> <output.json>
 
-offset_seconds is self_time - other_time for the same real-world instant
-(t_other = t_self - offset_seconds).
+offset_seconds is self_time - other_time for the same real-world instant,
+where self_time/other_time are each camera's frame index divided by its own
+motion_fps (real-world seconds, not playback seconds — the two can differ by
+each clip's slow-mo factor): t_other = t_self - offset_seconds.
 """
 import sys
 import os
@@ -62,10 +64,14 @@ def fuse(self_path, other_path, offset, out_path):
     n = len(self_frames)
     summary = self_d['summary']
     motion_fps = summary['motion_fps']
+    other_motion_fps = other_d['summary']['motion_fps']
 
-    self_times  = np.array([f['time'] for f in self_frames])
-    other_times = np.array([f['time'] for f in other_frames])
-    max_dt = (np.median(np.diff(self_times)) if n > 1 else 1.0 / summary['fps']) * 1.5
+    # Real-world seconds (frame / motion_fps), not playback seconds — needed
+    # so a constant `offset` aligns the two clocks even when the clips have
+    # different slow-mo factors (and thus different fps-vs-motion_fps ratios).
+    self_times  = np.array([f['frame'] for f in self_frames])  / motion_fps
+    other_times = np.array([f['frame'] for f in other_frames]) / other_motion_fps
+    max_dt = max(1.0 / motion_fps, 1.0 / other_motion_fps) * 0.75
 
     self_hip   = np.degrees(np.unwrap(np.deg2rad([f['metrics']['hip_rotation']      for f in self_frames])))
     self_sho   = np.degrees(np.unwrap(np.deg2rad([f['metrics']['shoulder_rotation'] for f in self_frames])))

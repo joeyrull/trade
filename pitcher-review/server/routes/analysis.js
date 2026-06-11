@@ -73,19 +73,116 @@ function updateOverallProgress(job) {
   };
 }
 
-// Sync the cameras' timelines using each clip's detected release frame as the
-// shared event. offsetsSeconds[i] is how much later (positive) or earlier
-// (negative) camera i's clock runs relative to camera 0's.
+// Build a real-world-time "motion energy" signal from a metrics.json's
+// frames — combined hip/chest/arm rotation speed, sampled at
+// frame/motion_fps. Used to cross-correlate the two cameras' clocks; this
+// combination stays large and sharply peaked around acceleration/release
+// from any camera angle, unlike a single rotation axis which can be
+// foreshortened depending on the camera's viewing direction.
+function motionSignal(data) {
+  const motionFps = data.summary.motion_fps;
+  return data.frames.map(f => ({
+    t: f.frame / motionFps,
+    v: Math.abs(f.metrics.hip_rotation_speed) +
+       Math.abs(f.metrics.chest_rotation_speed) +
+       Math.abs(f.metrics.arm_speed),
+  }));
+}
+
+// Linear interpolation of a {t, v}[] series (sorted by t) at time `t`.
+// Returns null outside the series' range.
+function interpAt(signal, t) {
+  const first = signal[0], last = signal[signal.length - 1];
+  if (t < first.t || t > last.t) return null;
+  let lo = 0, hi = signal.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (signal[mid].t <= t) lo = mid; else hi = mid;
+  }
+  const a = signal[lo], b = signal[hi];
+  return b.t === a.t ? a.v : a.v + (t - a.t) / (b.t - a.t) * (b.v - a.v);
+}
+
+function pearson(a, b) {
+  const n = a.length;
+  const meanA = a.reduce((s, x) => s + x, 0) / n;
+  const meanB = b.reduce((s, x) => s + x, 0) / n;
+  let num = 0, denA = 0, denB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = a[i] - meanA, db = b[i] - meanB;
+    num += da * db; denA += da * da; denB += db * db;
+  }
+  return (denA === 0 || denB === 0) ? 0 : num / Math.sqrt(denA * denB);
+}
+
+// Refine a release-frame-based offset estimate — a single-instant guess that
+// can be thrown off by a mis-detected release frame in either camera — by
+// cross-correlating the two cameras' motion-energy signals over real-world
+// time. `offset` follows computeSync's convention: camera-0 time t0
+// corresponds to camera-1 time t0 - offset. Searches lags within the search
+// window of the initial estimate and returns the best-correlated lag, or
+// null if nothing in that window correlates well enough to trust.
+const SYNC_SEARCH_WINDOW_S = 2;
+const SYNC_MIN_CORRELATION = 0.5;
+const SYNC_GRID_POINTS     = 200;
+
+function crossCorrelateOffset(sig0, sig1, initialOffset) {
+  const dur0 = sig0[sig0.length - 1].t;
+  const dur1 = sig1[sig1.length - 1].t;
+  const window  = Math.min(SYNC_SEARCH_WINDOW_S, 0.5 * Math.min(dur0, dur1));
+  const step    = Math.min(dur0, dur1) / SYNC_GRID_POINTS;
+  const minSpan = 0.5 * Math.min(dur0, dur1);
+  if (step <= 0) return null;
+
+  let best = null;
+  for (let lag = initialOffset - window; lag <= initialOffset + window; lag += step) {
+    const lo = Math.max(0, lag);
+    const hi = Math.min(dur0, lag + dur1);
+    if (hi - lo < minSpan) continue;
+
+    const a = [], b = [];
+    for (let t = lo; t <= hi; t += step) {
+      a.push(interpAt(sig0, t));
+      b.push(interpAt(sig1, t - lag));
+    }
+    const corr = pearson(a, b);
+    if (!best || corr > best.corr) best = { lag, corr };
+  }
+  if (!best || best.corr < SYNC_MIN_CORRELATION) return null;
+  return { offset: Math.round(best.lag * 10000) / 10000, correlation: Math.round(best.corr * 1000) / 1000 };
+}
+
+// Sync the cameras' timelines onto a shared real-world clock (frame index /
+// motion_fps, since slow-motion clips advance their frame index much faster
+// than real time — mixing in playback fps would silently misalign any pair
+// of clips with different slow-mo factors). A first estimate comes from each
+// clip's detected release frame; that estimate is then refined by
+// cross-correlating a motion-energy signal between the two clips, which is
+// far more robust than relying on a single detected frame in each camera.
+// offsetsSeconds[i] is how much later (positive) or earlier (negative)
+// camera i's clock runs relative to camera 0's, in real-world seconds:
+// t_camera_0 = t_camera_i + offsetsSeconds[i].
 function computeSync(job) {
   if (job.cameras.length < 2) return null;
   try {
-    const summaries = job.cameras.map(c => JSON.parse(fs.readFileSync(c.metricsPath, 'utf8')).summary);
-    const releaseTime = s => s.key_frames.release / s.fps;
-    const ref = releaseTime(summaries[0]);
-    return {
-      referenceCamera: 0,
-      offsetsSeconds: summaries.map(s => Math.round((ref - releaseTime(s)) * 10000) / 10000),
-    };
+    const data = job.cameras.map(c => JSON.parse(fs.readFileSync(c.metricsPath, 'utf8')));
+    const releaseTime = d => d.summary.key_frames.release / d.summary.motion_fps;
+    const ref = releaseTime(data[0]);
+    const sig0 = motionSignal(data[0]);
+
+    const offsetsSeconds = [0];
+    const methods = ['reference'];
+    const correlations = [null];
+
+    for (let i = 1; i < data.length; i++) {
+      const initial = ref - releaseTime(data[i]);
+      const refined = crossCorrelateOffset(sig0, motionSignal(data[i]), initial);
+      offsetsSeconds.push(refined ? refined.offset : Math.round(initial * 10000) / 10000);
+      methods.push(refined ? 'cross-correlation' : 'release-frame');
+      correlations.push(refined ? refined.correlation : null);
+    }
+
+    return { referenceCamera: 0, offsetsSeconds, methods, correlations };
   } catch (_) {
     return null;
   }

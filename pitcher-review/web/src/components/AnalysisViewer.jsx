@@ -83,7 +83,11 @@ export default function AnalysisViewer({ result }) {
           ))}
           {sync && (
             <span className="sync-note">
-              Synced on release frame
+              {sync.methods?.[activeCamera] === 'cross-correlation'
+                ? `Auto-synced (motion match ${(sync.correlations[activeCamera] * 100).toFixed(0)}%)`
+                : sync.methods?.[activeCamera] === 'release-frame'
+                  ? 'Synced on release frame'
+                  : 'Reference camera'}
               {sync.offsetsSeconds[activeCamera] !== 0 &&
                 ` (offset ${sync.offsetsSeconds[activeCamera] > 0 ? '+' : ''}${(sync.offsetsSeconds[activeCamera] * 1000).toFixed(0)} ms vs. Camera ${sync.referenceCamera + 1})`}
             </span>
