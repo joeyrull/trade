@@ -21,8 +21,11 @@ export default function AnalysisViewer({ result }) {
   const { cameras, sync } = result;
   const [activeCamera, setActiveCamera] = useState(0);
   const camera = cameras[activeCamera];
-  const { annotatedVideo, metrics } = camera;
-  const { summary, frames } = metrics;
+  const { annotatedVideo, metrics, metricsFused } = camera;
+  const fusionAvailable = !!(metricsFused && metricsFused.summary.fusion?.applied);
+  const [useFused, setUseFused] = useState(fusionAvailable);
+  const activeMetrics = (useFused && fusionAvailable) ? metricsFused : metrics;
+  const { summary, frames } = activeMetrics;
 
   const [tab, setTab] = useState('Overview');
   const [currentFrame, setCurrentFrame] = useState(0);
@@ -33,6 +36,12 @@ export default function AnalysisViewer({ result }) {
     setActiveCamera(idx);
     setCurrentFrame(0);
   }, []);
+
+  // Default to fused metrics whenever they become available for the active
+  // camera (e.g. after switching cameras or once fusion finishes processing).
+  useEffect(() => {
+    setUseFused(fusionAvailable);
+  }, [activeCamera, fusionAvailable]);
 
   // Sync video time → frame index
   useEffect(() => {
@@ -78,6 +87,17 @@ export default function AnalysisViewer({ result }) {
               {sync.offsetsSeconds[activeCamera] !== 0 &&
                 ` (offset ${sync.offsetsSeconds[activeCamera] > 0 ? '+' : ''}${(sync.offsetsSeconds[activeCamera] * 1000).toFixed(0)} ms vs. Camera ${sync.referenceCamera + 1})`}
             </span>
+          )}
+          {fusionAvailable && (
+            <label className="fusion-toggle">
+              <input
+                type="checkbox"
+                checked={useFused}
+                onChange={(e) => setUseFused(e.target.checked)}
+              />
+              Multi-camera fusion ({metricsFused.summary.fusion.filled_frames} frames filled
+              from Camera {(activeCamera === 0 ? 2 : 1)})
+            </label>
           )}
         </div>
       )}

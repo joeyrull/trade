@@ -7,11 +7,12 @@ const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
-const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
-const JOBS_DIR   = path.join(__dirname, '..', 'jobs');
-const SCRIPT     = path.join(__dirname, '..', 'scripts', 'analyze_pitcher.py');
-const PYTHON     = process.env.PYTHON_BIN || 'python3';
-const LIMIT_MB   = parseInt(process.env.UPLOAD_LIMIT_MB || '500', 10);
+const UPLOAD_DIR  = path.join(__dirname, '..', 'uploads');
+const JOBS_DIR    = path.join(__dirname, '..', 'jobs');
+const SCRIPT      = path.join(__dirname, '..', 'scripts', 'analyze_pitcher.py');
+const FUSE_SCRIPT = path.join(__dirname, '..', 'scripts', 'fuse_cameras.py');
+const PYTHON      = process.env.PYTHON_BIN || 'python3';
+const LIMIT_MB    = parseInt(process.env.UPLOAD_LIMIT_MB || '500', 10);
 
 const CAMERA_ANGLES = ['side', 'front', 'behind', 'three_quarter', 'other'];
 
@@ -45,6 +46,8 @@ function createJob(id, cameraInputs, throwHand) {
       annotatedVideo: null,
       metricsPath: null,
       metricsUrl: null,
+      metricsFusedPath: null,
+      metricsFusedUrl: null,
       done: false,
     })),
     progress: { stage: 'queued', pct: 0 },
@@ -85,6 +88,39 @@ function computeSync(job) {
     };
   } catch (_) {
     return null;
+  }
+}
+
+// After both cameras finish and a sync offset is available, fill each
+// camera's low-confidence frames using the other camera's data at the
+// corresponding instant (see fuse_cameras.py). Runs both directions in
+// parallel; failures are non-fatal — the per-camera metrics already
+// produced by runCamera() remain the result either way.
+function runFusion(job) {
+  if (job.cameras.length !== 2 || !job.sync) return;
+  const [cam0, cam1] = job.cameras;
+  const offsets = job.sync.offsetsSeconds;
+
+  const pairs = [
+    { self: cam0, other: cam1, offset: offsets[1] - offsets[0] },
+    { self: cam1, other: cam0, offset: offsets[0] - offsets[1] },
+  ];
+
+  for (const { self, other, offset } of pairs) {
+    const outPath = path.join(self.outputDir, 'metrics_fused.json');
+    const args = [FUSE_SCRIPT, self.metricsPath, other.metricsPath, String(offset), outPath];
+    const proc = spawn(PYTHON, args);
+
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      if (code === 0 && fs.existsSync(outPath)) {
+        self.metricsFusedPath = outPath;
+        self.metricsFusedUrl  = `/jobs/${job.id}/${path.basename(self.outputDir)}/metrics_fused.json`;
+      } else {
+        console.warn(`[fusion ${job.id} ${path.basename(self.outputDir)}] failed: ${stderr.trim()}`);
+      }
+    });
   }
 }
 
@@ -151,6 +187,7 @@ function runCamera(job, camIdx) {
       job.status = 'done';
       job.progress = { stage: 'done', pct: 100 };
       job.sync = computeSync(job);
+      runFusion(job);
     }
   });
 }
@@ -211,6 +248,7 @@ router.get('/status/:id', (req, res) => {
       angle: c.angle,
       annotatedVideo: c.annotatedVideo,
       metricsUrl: c.metricsUrl,
+      metricsFusedUrl: c.metricsFusedUrl,
     })),
     sync:      job.sync,
     error:     job.error,
@@ -228,6 +266,7 @@ router.get('/result/:id', async (req, res) => {
       angle: c.angle,
       annotatedVideo: c.annotatedVideo,
       metrics: JSON.parse(fs.readFileSync(c.metricsPath, 'utf8')),
+      metricsFused: c.metricsFusedPath ? JSON.parse(fs.readFileSync(c.metricsFusedPath, 'utf8')) : null,
     }));
     res.json({ status: 'done', cameras, sync: job.sync });
   } catch (e) {

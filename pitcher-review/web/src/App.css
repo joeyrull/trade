@@ -332,6 +332,17 @@ body {
 .camera-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
 .camera-btn:hover:not(.active) { border-color: var(--border-strong); color: var(--text); }
 .sync-note { font-size: 12px; color: var(--text-muted); margin-left: 4px; }
+.fusion-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.fusion-toggle input { cursor: pointer; }
 
 .viewer-top {
   display: grid;

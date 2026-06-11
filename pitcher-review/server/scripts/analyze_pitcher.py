@@ -176,6 +176,7 @@ MAX_INTERP_GAP_S = 0.1   # gaps in tracking shorter than this are linearly inter
                          # between the surrounding trusted samples rather than held flat;
                          # longer gaps are left held since the true value likely drifted
                          # too far to estimate from a straight line.
+PEAK_MIN_VALID_FRAC = 0.34  # below this, a peak-search window was too untracked to trust
 
 # ── Velocity filtering (Winter-style zero-lag Butterworth, see lowpass) ──────
 # Cutoffs are real frequencies (Hz), so the same physical noise band is rejected
@@ -265,6 +266,30 @@ def lowpass(series, fps, cutoff_hz, order=2):
     if n <= padlen:
         return x.tolist()
     return filtfilt(b, a, x).tolist()
+
+
+def best_peak(values, valid, lo, hi, n):
+    """argmax of values over [lo, hi], restricted to trustworthy frames.
+
+    A frame only qualifies if it *and both immediate neighbours* are valid —
+    this rejects the one-frame velocity spikes thrown off when tracking pops
+    back in mid-delivery (a foreshortened throwing arm snapping into view
+    previously produced an impossible ~2500 deg/s "peak"). The result is
+    flagged low-confidence when the search window was mostly untracked, so a
+    delivery whose actual acceleration phase couldn't be seen reports an
+    honest "uncertain" rather than whatever lone artifact survived."""
+    lo, hi = max(0, lo), min(n - 1, hi)
+    win = list(range(lo, hi + 1))
+    dens = (sum(1 for i in win if valid[i]) / len(win)) if win else 0.0
+    def neigh_ok(i):
+        return valid[i] and (i == 0 or valid[i-1]) and (i == n-1 or valid[i+1])
+    cand = [i for i in win if neigh_ok(i)] or [i for i in win if valid[i]]
+    if cand:
+        return max(cand, key=lambda i: values[i]), bool(dens < PEAK_MIN_VALID_FRAC)
+    cand = [i for i in range(n) if valid[i]]
+    if cand:
+        return max(cand, key=lambda i: values[i]), True
+    return int(np.argmax(values)), True
 
 
 def derivative(series, fps):
@@ -986,35 +1011,11 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     arm_hi  = min(n - 1, release_f + sec(0.20))
     valid_arm = elbow_ok
     valid_rot = [bool(hip_ang_ok[i] and sho_ang_ok[i]) for i in range(n)]
-    PEAK_MIN_VALID_FRAC = 0.34  # below this, the window was too untracked to trust
 
-    def best_peak(values, valid, lo, hi):
-        """argmax of values over [lo, hi], restricted to trustworthy frames.
-
-        A frame only qualifies if it *and both immediate neighbours* are valid —
-        this rejects the one-frame velocity spikes thrown off when tracking pops
-        back in mid-delivery (a foreshortened throwing arm snapping into view
-        previously produced an impossible ~2500 deg/s "peak"). The result is
-        flagged low-confidence when the search window was mostly untracked, so a
-        delivery whose actual acceleration phase couldn't be seen reports an
-        honest "uncertain" rather than whatever lone artifact survived."""
-        lo, hi = max(0, lo), min(n - 1, hi)
-        win = list(range(lo, hi + 1))
-        dens = (sum(1 for i in win if valid[i]) / len(win)) if win else 0.0
-        def neigh_ok(i):
-            return valid[i] and (i == 0 or valid[i-1]) and (i == n-1 or valid[i+1])
-        cand = [i for i in win if neigh_ok(i)] or [i for i in win if valid[i]]
-        if cand:
-            return max(cand, key=lambda i: values[i]), bool(dens < PEAK_MIN_VALID_FRAC)
-        cand = [i for i in range(n) if valid[i]]
-        if cand:
-            return max(cand, key=lambda i: values[i]), True
-        return int(np.argmax(values)), True
-
-    arm_peak_f,   arm_peak_lc   = best_peak(arm_speeds,   valid_arm, fs_f,   arm_hi)
-    hip_peak_f,   hip_peak_lc   = best_peak(hip_speeds,   valid_rot, rot_lo, spd_hi)
-    chest_peak_f, chest_peak_lc = best_peak(chest_speeds, valid_rot, rot_lo, spd_hi)
-    hss_peak_f,   hss_peak_lc   = best_peak(hss_vals,     valid_rot, ss_f,   spd_hi)
+    arm_peak_f,   arm_peak_lc   = best_peak(arm_speeds,   valid_arm, fs_f,   arm_hi, n)
+    hip_peak_f,   hip_peak_lc   = best_peak(hip_speeds,   valid_rot, rot_lo, spd_hi, n)
+    chest_peak_f, chest_peak_lc = best_peak(chest_speeds, valid_rot, rot_lo, spd_hi, n)
+    hss_peak_f,   hss_peak_lc   = best_peak(hss_vals,     valid_rot, ss_f,   spd_hi, n)
 
     # Per-phase tracking confidence — surfaces *where* in the delivery the
     # pose tracking was/wasn't trustworthy, since an overall percentage can
