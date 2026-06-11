@@ -23,6 +23,9 @@ export default function ProgressBar({ job }) {
   return (
     <div className="progress-card">
       <h3>Analyzing Delivery</h3>
+      {progress.totalCameras > 1 && (
+        <p className="progress-camera-note">Camera {progress.camera} of {progress.totalCameras}</p>
+      )}
 
       <div className="stage-steps">
         {STAGES.filter(s => s !== 'queued').map((s, i) => {

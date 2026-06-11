@@ -9,14 +9,30 @@ import { PHASE_COLORS, METRIC_COLORS, STATUS_COLORS } from '../theme';
 
 const TABS = ['Overview', 'Charts', 'Phases', 'Lab Report', 'Annotated Video'];
 
+const ANGLE_LABELS = {
+  side:          'Side view',
+  front:         'Front view',
+  behind:        'Behind',
+  three_quarter: '3/4 angle',
+  other:         'Other angle',
+};
+
 export default function AnalysisViewer({ result }) {
-  const { annotatedVideo, metrics } = result;
+  const { cameras, sync } = result;
+  const [activeCamera, setActiveCamera] = useState(0);
+  const camera = cameras[activeCamera];
+  const { annotatedVideo, metrics } = camera;
   const { summary, frames } = metrics;
 
   const [tab, setTab] = useState('Overview');
   const [currentFrame, setCurrentFrame] = useState(0);
   const videoRef = useRef(null);
   const annotatedVideoRef = useRef(null);
+
+  const switchCamera = useCallback((idx) => {
+    setActiveCamera(idx);
+    setCurrentFrame(0);
+  }, []);
 
   // Sync video time → frame index
   useEffect(() => {
@@ -45,6 +61,27 @@ export default function AnalysisViewer({ result }) {
 
   return (
     <div className="viewer">
+      {cameras.length > 1 && (
+        <div className="camera-selector">
+          {cameras.map((c, i) => (
+            <button
+              key={i}
+              className={`camera-btn ${i === activeCamera ? 'active' : ''}`}
+              onClick={() => switchCamera(i)}
+            >
+              Camera {i + 1} — {ANGLE_LABELS[c.angle] || c.angle}
+            </button>
+          ))}
+          {sync && (
+            <span className="sync-note">
+              Synced on release frame
+              {sync.offsetsSeconds[activeCamera] !== 0 &&
+                ` (offset ${sync.offsetsSeconds[activeCamera] > 0 ? '+' : ''}${(sync.offsetsSeconds[activeCamera] * 1000).toFixed(0)} ms vs. Camera ${sync.referenceCamera + 1})`}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Sticky video + live metrics strip */}
       <div className="viewer-top">
         <div className="video-column">

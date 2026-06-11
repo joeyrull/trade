@@ -7,7 +7,7 @@ const POLL_MS = 1200;
 
 export default function App() {
   const [job, setJob] = useState(null);       // { jobId, status, progress, ... }
-  const [result, setResult] = useState(null); // { annotatedVideo, metrics }
+  const [result, setResult] = useState(null); // { cameras: [{ angle, annotatedVideo, metrics }], sync }
   const pollRef = useRef(null);
 
   const stopPolling = () => {
@@ -31,14 +31,19 @@ export default function App() {
     } catch (_) { /* network hiccup — keep polling */ }
   }, []);
 
-  const handleUpload = useCallback(async ({ file, throwHand }) => {
+  const handleUpload = useCallback(async ({ file, angle, throwHand, file2, angle2 }) => {
     setJob(null);
     setResult(null);
     stopPolling();
 
     const form = new FormData();
     form.append('video', file);
+    form.append('angle', angle || 'side');
     form.append('throwHand', throwHand);
+    if (file2) {
+      form.append('video2', file2);
+      form.append('angle2', angle2 || 'front');
+    }
 
     const r = await fetch('/api/analysis/upload', { method: 'POST', body: form });
     const data = await r.json();
