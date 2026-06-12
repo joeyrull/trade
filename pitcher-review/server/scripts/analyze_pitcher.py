@@ -24,6 +24,24 @@ from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
 
+def json_sanitize(obj):
+    """Recursively replace non-finite floats (NaN/Infinity) with None.
+
+    Python's ``json.dump`` emits the literal ``NaN``/``Infinity`` tokens, which
+    are invalid JSON: the Node server and the browser both reject them with a
+    SyntaxError, turning one bad value anywhere in metrics.json into an
+    HTTP-500 / unreadable-result for the whole analysis. Applied at every
+    metrics.json write as the general guarantee that the output is valid JSON,
+    independent of which metric/engine produced it."""
+    if isinstance(obj, float):
+        return obj if np.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: json_sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_sanitize(v) for v in obj]
+    return obj
+
+
 def find_ffmpeg():
     """Locate an ffmpeg binary: prefer one on PATH, otherwise fall back to
     the portable static build bundled by the imageio-ffmpeg package (so the
@@ -1445,7 +1463,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None,
     output = {'summary': summary, 'frames': json_frames}
     metrics_path = os.path.join(output_dir, 'metrics.json')
     with open(metrics_path, 'w') as fp:
-        json.dump(output, fp)
+        json.dump(json_sanitize(output), fp)
 
     emit('done', n, n)
     return {'annotated_video': ann_path, 'metrics': metrics_path}
@@ -1504,7 +1522,7 @@ def rebuild_metrics(series_path, metrics_path, motion_fps, out_path):
                 lags[k] = round(lags[k] / r, 1)
 
     with open(out_path, 'w') as fp:
-        json.dump({'summary': summary, 'frames': frames}, fp)
+        json.dump(json_sanitize({'summary': summary, 'frames': frames}), fp)
 
     return {'motion_fps': summary['motion_fps']}
 

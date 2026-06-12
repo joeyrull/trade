@@ -33,7 +33,7 @@ import json
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from analyze_pitcher import lowpass, derivative, best_peak, ROT_CUTOFF_HZ, ARM_CUTOFF_HZ
+from analyze_pitcher import lowpass, derivative, best_peak, ROT_CUTOFF_HZ, ARM_CUTOFF_HZ, json_sanitize
 
 # Minimum number of frames where *both* cameras are simultaneously confident
 # needed to trust a fitted cross-camera angle offset. Below this, the
@@ -236,7 +236,7 @@ def fuse(self_path, other_path, offset, out_path):
     }
 
     with open(out_path, 'w') as fp:
-        json.dump({'summary': out_summary, 'frames': out_frames}, fp)
+        json.dump(json_sanitize({'summary': out_summary, 'frames': out_frames}), fp)
 
     return out_summary
 

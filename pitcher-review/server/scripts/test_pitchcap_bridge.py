@@ -9,6 +9,7 @@ Run:  cd server/scripts && python3 -m pytest test_pitchcap_bridge.py -q
 """
 import os
 import sys
+import json
 
 import numpy as np
 
@@ -37,6 +38,19 @@ def test_aligned_window_implausible_offset_falls_back():
 def test_aligned_window_no_audio_uses_common_length():
     starts, m = pa._aligned_window(None, [100, 90])
     assert starts == [0, 0] and m == 90    # still trim to a common length
+
+
+# ── json_sanitize (serialization safety net) ────────────────────────────────
+
+def test_json_sanitize_replaces_non_finite():
+    obj = {"a": float('inf'), "b": [1.0, float('nan'), 3.0],
+           "c": {"d": -float('inf')}, "e": "x", "f": 2, "g": None}
+    out = ap.json_sanitize(obj)
+    assert out["a"] is None
+    assert out["b"] == [1.0, None, 3.0]
+    assert out["c"]["d"] is None
+    assert out["e"] == "x" and out["f"] == 2 and out["g"] is None
+    json.dumps(out, allow_nan=False)   # strict JSON: must not raise
 
 
 # ── _segment_tracked_fractions ──────────────────────────────────────────────

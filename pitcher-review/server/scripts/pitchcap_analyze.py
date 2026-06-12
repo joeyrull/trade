@@ -389,7 +389,7 @@ def _analyze_multiview(video_paths, output_dir, throw_hand, progress_cb):
                             'landmarks': lm})
 
     with open(os.path.join(output_dir, 'metrics.json'), 'w') as fp:
-        json.dump({'summary': summary, 'frames': json_frames}, fp)
+        json.dump(ap.json_sanitize({'summary': summary, 'frames': json_frames}), fp)
 
     emit('done', n, n)
     return {'annotated_video': ann_path, 'metrics': os.path.join(output_dir, 'metrics.json')}
