@@ -94,13 +94,34 @@ You can also just copy the take directory over (e.g. `scp`/`rsync`/a shared
 network drive) and upload the three files manually through the web UI's
 "add a second/third camera angle" flow.
 
+## One-time camera calibration
+
+Once each camera is mounted in its final spot, record a ~10-15s clip of a
+printed checkerboard (default 9x6 inner corners) moved around the frame and
+tilted a bit, then for each camera:
+
+```bash
+python3 calibrate.py checkerboard_cam0.avi --cam-index 0 --square-mm 25
+```
+
+This writes `../server/scripts/calibration/cam0.json` (etc. for cam1/cam2).
+`pitchcap_analyze.py`'s multi-view path automatically uses any `camN.json`
+whose `image_size` matches that camera's clip, which sharpens the recovered
+3D scale over the `approximate_intrinsics` fallback. Nothing breaks if a
+profile is missing or doesn't match — it just falls back and notes it in
+`summary.pitchcap.warnings`. Re-run if a camera is ever repositioned or
+refocused.
+
 ## Notes / future work
 
-- **Intrinsics**: `_extract_multiview` currently falls back to
-  `approximate_intrinsics` (focal ≈ image width) per camera. A one-time
-  checkerboard calibration per camera (`pitchcap.intrinsics.calibrate_from_video`)
-  would sharpen the recovered 3D scale — worth doing once the rig is mounted,
-  since these cameras won't move again.
+- **Processing time**: RTMPose 2D estimation is the bottleneck — roughly
+  ~2-2.5 fps per camera on CPU-only `onnxruntime`. At 120fps that's ~50x
+  slower than real time, *per camera*, and the 3 cameras run sequentially
+  (one pose pass per clip). A 4-second take (480 frames x 3 cams = 1440
+  frames) would take ~10 minutes on CPU. **Keep takes short** — just the
+  windup-through-release window, not the whole bullpen — and/or run the
+  server with a GPU-enabled `onnxruntime` (`onnxruntime-gpu`) if available on
+  the analysis machine.
 - **USB bandwidth**: three simultaneous 720p/120fps MJPG streams is a lot of
   USB traffic. If frames drop, try a powered USB3 hub, or lower resolution/fps
   slightly (edit `WIDTH`/`HEIGHT`/`FPS` in `record_sync.py` and `trigger.py`'s

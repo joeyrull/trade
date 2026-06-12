@@ -154,6 +154,38 @@ def _world_rotation_series(pL, pR, lok, rok, n, max_jump_deg, max_gap):
     return ap.filter_angle_series(raw_angs, valid, max_jump_deg, max_gap=max_gap)
 
 
+CALIBRATION_DIR = os.path.join(_HERE, 'calibration')
+
+
+def _load_intrinsics(clips):
+    """Per-camera Intrinsics: a saved calibration profile at
+    calibration/cam{i}.json (one-time checkerboard calibration for a
+    fixed-position camera — see capture/calibrate.py) if present and matching
+    the clip's resolution, else the focal~=width fallback."""
+    from pitchcap.intrinsics import approximate_intrinsics, load_profile
+    intrinsics, warnings = [], []
+    for i, c in enumerate(clips):
+        profile_path = os.path.join(CALIBRATION_DIR, f'cam{i}.json')
+        intr = None
+        if os.path.exists(profile_path):
+            try:
+                cand = load_profile(profile_path)
+                if tuple(cand.image_size) == tuple(c.image_size):
+                    intr = cand
+                else:
+                    warnings.append(
+                        f'camera_{i} calibration profile is for {tuple(cand.image_size)} '
+                        f'but clip is {tuple(c.image_size)}; using approximate intrinsics')
+            except Exception as e:
+                warnings.append(f'camera_{i} failed to load calibration profile: {e!r}')
+        if intr is None:
+            intr = approximate_intrinsics(c.image_size)
+            if not os.path.exists(profile_path):
+                warnings.append(f'camera_{i} using approximate intrinsics (no calibration profile)')
+        intrinsics.append(intr)
+    return intrinsics, warnings
+
+
 def _extract_multiview(video_paths, emit):
     """RTMPose 2D per view + markerless triangulation -> (kp3d_world (T,17,3),
     kp2d_img (T,17,2 normalized), vis (T,17), n_cams, reproj_err, W, H, cap_fps,
@@ -161,7 +193,6 @@ def _extract_multiview(video_paths, emit):
     metrics + drawing. Requires rtmlib; raises if unavailable."""
     from pitchcap import io_video, pose2d, reconstruct
     from pitchcap.sync import frame_offsets_from_audio
-    from pitchcap.intrinsics import approximate_intrinsics
 
     emit('extracting', 0, 1)
     clips = [io_video.load_clip(p) for p in video_paths]
@@ -177,7 +208,7 @@ def _extract_multiview(video_paths, emit):
     kp2d_views = [a[s:s + m] for a, s in zip(kp2d_views, starts)]
     conf_views = [a[s:s + m] for a, s in zip(conf_views, starts)]
 
-    intrinsics = [approximate_intrinsics(c.image_size) for c in clips]
+    intrinsics, warnings = _load_intrinsics(clips)
     kp3d_world, reproj_err = reconstruct.reconstruct_multiview(kp2d_views, conf_views, intrinsics)
 
     W0, H0 = clips[0].image_size
@@ -186,8 +217,6 @@ def _extract_multiview(video_paths, emit):
     kp2d_img[..., 0] /= max(W0, 1)
     kp2d_img[..., 1] /= max(H0, 1)
     vis = conf_views[0][:T]
-    warnings = [f'camera_{i} using approximate intrinsics (no lens profile)'
-                for i in range(len(clips))]
     return (kp3d_world[:T], kp2d_img, vis, len(clips), reproj_err,
             W0, H0, cap_fps, warnings)
 

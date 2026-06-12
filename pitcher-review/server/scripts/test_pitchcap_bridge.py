@@ -149,3 +149,43 @@ def test_attach_noop_without_world_landmarks():
     summary = {}
     ap.attach_kinematic_sequence(summary, raw, 30.0, 'right')
     assert 'pitchcap' not in summary  # nothing to compute, summary untouched
+
+
+# ── _load_intrinsics (per-camera calibration profiles) ──────────────────────
+
+class _FakeClip:
+    def __init__(self, image_size):
+        self.image_size = image_size
+
+
+def test_load_intrinsics_falls_back_without_profiles(monkeypatch, tmp_path):
+    monkeypatch.setattr(pa, 'CALIBRATION_DIR', str(tmp_path))
+    clips = [_FakeClip((1280, 720)), _FakeClip((1280, 720))]
+    intrinsics, warnings = pa._load_intrinsics(clips)
+    assert len(intrinsics) == 2
+    assert all('no calibration profile' in w for w in warnings)
+
+
+def test_load_intrinsics_uses_matching_profile(monkeypatch, tmp_path):
+    from pitchcap.intrinsics import save_profile
+    monkeypatch.setattr(pa, 'CALIBRATION_DIR', str(tmp_path))
+    K = np.array([[900.0, 0, 640], [0, 900.0, 360], [0, 0, 1]])
+    save_profile(str(tmp_path / 'cam0.json'), K, np.zeros(5), (1280, 720))
+
+    clips = [_FakeClip((1280, 720)), _FakeClip((1280, 720))]
+    intrinsics, warnings = pa._load_intrinsics(clips)
+    assert np.allclose(intrinsics[0].K, K)            # camera 0: calibrated profile used
+    assert not any('camera_0' in w for w in warnings)
+    assert any('camera_1' in w and 'no calibration profile' in w for w in warnings)  # camera 1: fallback
+
+
+def test_load_intrinsics_ignores_mismatched_resolution(monkeypatch, tmp_path):
+    from pitchcap.intrinsics import save_profile
+    monkeypatch.setattr(pa, 'CALIBRATION_DIR', str(tmp_path))
+    K = np.array([[900.0, 0, 640], [0, 900.0, 360], [0, 0, 1]])
+    save_profile(str(tmp_path / 'cam0.json'), K, np.zeros(5), (1920, 1080))  # different resolution
+
+    clips = [_FakeClip((1280, 720))]
+    intrinsics, warnings = pa._load_intrinsics(clips)
+    assert not np.allclose(intrinsics[0].K, K)         # fell back to approximate, not the mismatched profile
+    assert any('camera_0' in w and 'but clip is' in w for w in warnings)
