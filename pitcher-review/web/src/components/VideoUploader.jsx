@@ -20,13 +20,20 @@ export default function VideoUploader({ onUpload }) {
   const [preview2, setPreview2] = useState(null);
   const [angle2, setAngle2] = useState('front');
 
+  const [showThird, setShowThird] = useState(false);
+  const [file3, setFile3] = useState(null);
+  const [preview3, setPreview3] = useState(null);
+  const [angle3, setAngle3] = useState('three_quarter');
+
   const [throwHand, setThrowHand] = useState('left');
   const [dragging, setDragging] = useState(false);
   const [dragging2, setDragging2] = useState(false);
+  const [dragging3, setDragging3] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef(null);
   const inputRef2 = useRef(null);
+  const inputRef3 = useRef(null);
 
   const pickFile = useCallback((f) => {
     if (!f) return;
@@ -44,6 +51,14 @@ export default function VideoUploader({ onUpload }) {
     setPreview2(url);
   }, []);
 
+  const pickFile3 = useCallback((f) => {
+    if (!f) return;
+    setFile3(f);
+    setError('');
+    const url = URL.createObjectURL(f);
+    setPreview3(url);
+  }, []);
+
   const onDrop = useCallback((e) => {
     e.preventDefault();
     setDragging(false);
@@ -58,10 +73,26 @@ export default function VideoUploader({ onUpload }) {
     if (f) pickFile2(f);
   }, [pickFile2]);
 
+  const onDrop3 = useCallback((e) => {
+    e.preventDefault();
+    setDragging3(false);
+    const f = e.dataTransfer.files[0];
+    if (f) pickFile3(f);
+  }, [pickFile3]);
+
   const removeSecond = useCallback(() => {
     setFile2(null);
     setPreview2(null);
     setShowSecond(false);
+    setFile3(null);
+    setPreview3(null);
+    setShowThird(false);
+  }, []);
+
+  const removeThird = useCallback(() => {
+    setFile3(null);
+    setPreview3(null);
+    setShowThird(false);
   }, []);
 
   const handleSubmit = async (e) => {
@@ -73,6 +104,7 @@ export default function VideoUploader({ onUpload }) {
       await onUpload({
         file, angle, throwHand,
         ...(file2 ? { file2, angle2 } : {}),
+        ...(file2 && file3 ? { file3, angle3 } : {}),
       });
     } catch (err) {
       setError(err.message);
@@ -165,6 +197,55 @@ export default function VideoUploader({ onUpload }) {
               <div className="file-meta-row">
                 <p className="filename">{file2.name} ({(file2.size / 1024 / 1024).toFixed(1)} MB)</p>
                 <AngleSelect value={angle2} onChange={setAngle2} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Optional third camera angle (only useful alongside a second) */}
+        {showSecond && file2 && !showThird && (
+          <button type="button" className="btn-ghost add-camera-btn" onClick={() => setShowThird(true)}>
+            + Add a third camera angle (optional)
+          </button>
+        )}
+
+        {showSecond && showThird && (
+          <div className="second-camera">
+            <div className="second-camera-header">
+              <span className="second-camera-title">Third camera angle</span>
+              <button type="button" className="btn-ghost remove-camera-btn" onClick={removeThird}>Remove</button>
+            </div>
+            <p className="uploader-hint">
+              A third synced angle further constrains the 3D reconstruction —
+              useful for a multi-camera rig covering the full delivery.
+            </p>
+            <div
+              className={`drop-zone ${dragging3 ? 'dragging' : ''} ${file3 ? 'has-file' : ''}`}
+              onDragOver={e => { e.preventDefault(); setDragging3(true); }}
+              onDragLeave={() => setDragging3(false)}
+              onDrop={onDrop3}
+              onClick={() => inputRef3.current?.click()}
+            >
+              {preview3 ? (
+                <video src={preview3} className="preview-video" muted playsInline />
+              ) : (
+                <div className="drop-placeholder">
+                  <span>Drop third video here or click to browse</span>
+                  <span className="drop-formats">MP4 · MOV · AVI · MKV · WebM</span>
+                </div>
+              )}
+              <input
+                ref={inputRef3}
+                type="file"
+                accept={ACCEPTED}
+                style={{ display: 'none' }}
+                onChange={e => pickFile3(e.target.files[0])}
+              />
+            </div>
+            {file3 && (
+              <div className="file-meta-row">
+                <p className="filename">{file3.name} ({(file3.size / 1024 / 1024).toFixed(1)} MB)</p>
+                <AngleSelect value={angle3} onChange={setAngle3} />
               </div>
             )}
           </div>

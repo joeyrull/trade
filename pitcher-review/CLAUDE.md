@@ -12,6 +12,10 @@ web/ (React/Vite)  ──HTTP──>  server/ (Express)  ──spawn──>  scr
   KinematicSequence            (job store, sync, fusion)      pitchcap_analyze.py (PitchCap engine, default)
   SummaryReport / LabReport                                   fuse_cameras.py     (2-cam metric fusion)
                                                               pitchcap/           (vendored PitchCap pkg)
+
+capture/  Raspberry Pi scripts for a hardware-triggered 3x OV9281 720p/120fps
+          garage rig -> synced clips -> uploaded to /api/analysis/upload for
+          true multi-view triangulation. See capture/README.md.
 ```
 
 `routes/analysis.js` runs each uploaded camera through an analyzer subprocess
@@ -29,9 +33,11 @@ optionally cross-syncs and fuses two cameras.
   multi-view triangulation → true metric 3D.
 - `PITCHER_ENGINE=mediapipe` → original `analyze_pitcher.py` (no kinematic
   sequence).
-- `PITCHER_MULTIVIEW=1` (off by default, PitchCap engine only): two uploaded
-  cameras go to ONE process for true triangulation instead of per-camera +
-  fusion. Needs `rtmlib`+`onnxruntime`; falls back to monocular on camera 0.
+- `PITCHER_MULTIVIEW=1` (off by default, PitchCap engine only): 2-3 uploaded
+  cameras (`video`/`video2`/`video3`) go to ONE process for true triangulation
+  instead of per-camera + fusion. `reconstruct_multiview` resolves a shared
+  global scale across all camera pairs for 3-camera setups. Needs
+  `rtmlib`+`onnxruntime`; falls back to monocular on camera 0.
 
 PitchCap (`server/pitchcap/`) is a standalone markerless motion-capture core;
 its headline output is the kinematic sequence (pelvis→trunk→arm angular

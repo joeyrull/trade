@@ -21,12 +21,14 @@ const REBUILD_SCRIPT = path.join(__dirname, '..', 'scripts', 'analyze_pitcher.py
 const FUSE_SCRIPT = path.join(__dirname, '..', 'scripts', 'fuse_cameras.py');
 const PYTHON      = process.env.PYTHON_BIN || 'python3';
 const LIMIT_MB    = parseInt(process.env.UPLOAD_LIMIT_MB || '500', 10);
-// When set (and the PitchCap engine is active), two uploaded cameras are sent to
+// When set (and the PitchCap engine is active), 2-3 uploaded cameras are sent to
 // a SINGLE pitchcap_analyze process for true multi-view triangulation (one 3D
 // reconstruction) instead of the default per-camera analysis + fusion. Off by
 // default: it needs rtmlib+onnxruntime in the deployment (the engine falls back
-// to monocular on camera 0 with a warning if they're absent) and the two clips
-// genuinely overlapping in time.
+// to monocular on camera 0 with a warning if they're absent) and the clips
+// genuinely overlapping in time. reconstruct_multiview already generalizes to
+// N>=2 views (3-camera triangulation resolves a shared global scale across all
+// camera pairs and uses robust triangulation).
 const MULTIVIEW = process.env.PITCHER_MULTIVIEW === '1' && ENGINE === 'pitchcap';
 
 const CAMERA_ANGLES = ['side', 'front', 'behind', 'three_quarter', 'other'];
@@ -448,6 +450,7 @@ function runCamera(job, camIdx) {
 router.post('/upload', upload.fields([
   { name: 'video',  maxCount: 1 },
   { name: 'video2', maxCount: 1 },
+  { name: 'video3', maxCount: 1 },
 ]), (req, res) => {
   const videoFile = req.files?.video?.[0];
   if (!videoFile) return res.status(400).json({ error: 'No video file uploaded' });
@@ -471,14 +474,26 @@ router.post('/upload', upload.fields([
     }
   }
 
+  const video3File = req.files?.video3?.[0];
+  let angle3 = null;
+  if (video3File) {
+    angle3 = (req.body.angle3 || 'three_quarter').toLowerCase();
+    if (!CAMERA_ANGLES.includes(angle3)) {
+      return res.status(400).json({ error: 'Invalid third camera angle' });
+    }
+  }
+
   let cameraInputs;
   if (MULTIVIEW && video2File) {
-    // One camera entry that triangulates both clips into a single 3D
-    // reconstruction (pitchcap_analyze receives both video paths).
-    cameraInputs = [{ uploadPaths: [videoFile.path, video2File.path], angle: 'multiview' }];
+    // One camera entry that triangulates all clips into a single 3D
+    // reconstruction (pitchcap_analyze receives every video path).
+    const paths = [videoFile.path, video2File.path];
+    if (video3File) paths.push(video3File.path);
+    cameraInputs = [{ uploadPaths: paths, angle: 'multiview' }];
   } else {
     cameraInputs = [{ uploadPath: videoFile.path, angle }];
     if (video2File) cameraInputs.push({ uploadPath: video2File.path, angle: angle2 });
+    if (video3File) cameraInputs.push({ uploadPath: video3File.path, angle: angle3 });
   }
 
   const id  = uuidv4();

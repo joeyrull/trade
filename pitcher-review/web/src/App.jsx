@@ -31,7 +31,7 @@ export default function App() {
     } catch (_) { /* network hiccup — keep polling */ }
   }, []);
 
-  const handleUpload = useCallback(async ({ file, angle, throwHand, file2, angle2 }) => {
+  const handleUpload = useCallback(async ({ file, angle, throwHand, file2, angle2, file3, angle3 }) => {
     setJob(null);
     setResult(null);
     stopPolling();
@@ -43,6 +43,10 @@ export default function App() {
     if (file2) {
       form.append('video2', file2);
       form.append('angle2', angle2 || 'front');
+    }
+    if (file3) {
+      form.append('video3', file3);
+      form.append('angle3', angle3 || 'three_quarter');
     }
 
     const r = await fetch('/api/analysis/upload', { method: 'POST', body: form });
