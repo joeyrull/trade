@@ -14,6 +14,29 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import analyze_pitcher as ap  # noqa: E402
+import pitchcap_analyze as pa  # noqa: E402
+
+
+# ── _aligned_window (multi-view time alignment) ─────────────────────────────
+
+def test_aligned_window_lagging_clip():
+    starts, m = pa._aligned_window([0, 12], [100, 100])
+    assert starts == [0, 12] and m == 88   # clip 1 lags 12 -> drop its first 12
+
+
+def test_aligned_window_leading_clip():
+    starts, m = pa._aligned_window([0, -12], [100, 100])
+    assert starts == [12, 0] and m == 88   # clip 1 leads -> trim the reference
+
+
+def test_aligned_window_implausible_offset_falls_back():
+    starts, m = pa._aligned_window([0, 500], [100, 100])  # start would exceed clip
+    assert starts == [0, 0] and m == 100   # abandon alignment, no empty slice
+
+
+def test_aligned_window_no_audio_uses_common_length():
+    starts, m = pa._aligned_window(None, [100, 90])
+    assert starts == [0, 0] and m == 90    # still trim to a common length
 
 
 # ── _segment_tracked_fractions ──────────────────────────────────────────────

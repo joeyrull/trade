@@ -90,6 +90,26 @@ def _maps():
     return C, coco_name, coco_to_mp, side_coco
 
 
+def _aligned_window(offsets, lengths):
+    """Per-view ``(starts, common_length)`` to time-align views by integer frame
+    offsets before triangulation (which indexes every view at the same frame).
+
+    ``start = offset - min(offset)`` aligns both a clip that LEADS the reference
+    (negative offset → the reference is trimmed) and one that lags. If any start
+    would fall outside its clip — an implausible offset from a noisy/near-silent
+    audio track — alignment is abandoned (all starts 0) rather than producing an
+    empty slice. Always returns a single common length so every trimmed view is
+    identical-length. ``offsets=None`` means no audio sync (starts all 0)."""
+    starts = [0] * len(lengths)
+    if offsets is not None:
+        min_off = min(offsets)
+        cand = [o - min_off for o in offsets]
+        if all(0 <= s < L for s, L in zip(cand, lengths)):
+            starts = cand
+    m = max(0, min(L - s for L, s in zip(lengths, starts)))
+    return starts, m
+
+
 def _frame_gen(path):
     cap = cv2.VideoCapture(path)
     try:
@@ -150,20 +170,10 @@ def _extract_multiview(video_paths, emit):
     kp2d_views = [p[0] for p in poses]
     conf_views = [p[1] for p in poses]
 
-    # Time-align the views to a common frame window. Triangulation indexes every
-    # view at the same frame index, so they MUST end up the same length whether
-    # or not audio sync applies. Per-clip start = offset - min(offset) handles a
-    # clip that LEADS the reference (negative offset) as well as one that lags,
-    # and is left at 0 if the audio offsets are implausible (e.g. start beyond a
-    # clip's length on a noisy/near-silent track).
-    starts = [0] * len(clips)
+    offsets = None
     if all(len(c.audio) for c in clips):
         offsets = frame_offsets_from_audio([c.audio for c in clips], fps=cap_fps, sr=clips[0].sr)
-        min_off = min(offsets)
-        cand = [o - min_off for o in offsets]
-        if all(0 <= s < len(a) for s, a in zip(cand, kp2d_views)):
-            starts = cand
-    m = max(0, min(len(a) - s for a, s in zip(kp2d_views, starts)))
+    starts, m = _aligned_window(offsets, [len(a) for a in kp2d_views])
     kp2d_views = [a[s:s + m] for a, s in zip(kp2d_views, starts)]
     conf_views = [a[s:s + m] for a, s in zip(conf_views, starts)]
 

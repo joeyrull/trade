@@ -107,4 +107,35 @@ monocular. The kinematic-sequence add-on is wrapped in try/except, so a missing
 package or a degenerate clip simply omits `summary.pitchcap` rather than failing
 the analysis.
 
-Run the math test suite: `cd server/pitchcap && python3 -m pytest -q` (20 tests).
+Run the math test suite: `cd server/pitchcap && python3 -m pytest -q` (23 tests).
+Bridge glue tests: `cd server/scripts && python3 -m pytest test_pitchcap_bridge.py -q` (10 tests).
+
+## Validation status
+
+- Single-camera (default Node path) verified end-to-end through the HTTP API
+  (`POST /api/analysis/upload` → poll `/status` → `GET /result`): the trusted
+  per-frame metrics are byte-identical to the MediaPipe engine, `summary.pitchcap`
+  flows through to the result, the annotated video is served, and the result is
+  strict-JSON over the wire. On a real 300fps clip PitchCap recovers a clean
+  pelvis→trunk→arm sequence (~913/509/4222 °/s after per-segment cutoffs).
+- Multi-view orchestration (RTMPose 2D → triangulation → web schema) smoke-tested
+  end-to-end on real RTMPose output (`mode: multiview`, reprojection error
+  reported). Its reconstruction math has unit coverage in
+  `tests/test_multiview_scale.py` / `test_triangulate.py` / `test_calibrate_extrinsic.py`.
+
+## Enabling true two-camera triangulation
+
+The current Node flow analyzes each uploaded camera in its own process and then
+*fuses* (`fuse_cameras.py`) — it does not triangulate the two views into one 3D
+reconstruction. To get true multi-view 3D, run the engine on both clips in a
+single process via the CLI (needs `rtmlib` + `onnxruntime` installed and the two
+clips overlapping in time with a shared audio event for sync):
+
+```bash
+python3 scripts/pitchcap_analyze.py cam0.mov cam1.mov \
+    --output-dir out --throw-hand R --progress
+```
+
+Wiring this into the upload flow (send both clips to one `pitchcap_analyze`
+process when 2 cameras are uploaded) is the natural next step, gated on the
+multi-view dependencies being present in the deployment.
