@@ -1482,6 +1482,27 @@ def rebuild_metrics(series_path, metrics_path, motion_fps, out_path):
     summary['motion_fps_detected']  = motion_fps_detected
     summary['motion_fps_corrected'] = True
 
+    # The PitchCap kinematic sequence was computed at the originally-detected
+    # motion_fps and can't be recomputed here (series.json holds no 3D), but it
+    # reparametrizes exactly with frame rate: angular velocity scales with fps
+    # and time scales with 1/fps. Rescale so its peaks/times/axis stay consistent
+    # with the corrected metrics rather than reading off by the slow-mo factor.
+    pc = summary.get('pitchcap')
+    if pc and motion_fps_detected and motion_fps_detected > 0:
+        r = motion_fps / motion_fps_detected
+        ks = pc.get('kinematic_sequence', {})
+        ks['fps'] = motion_fps
+        for seg in ks.get('segments', {}).values():
+            if seg.get('peak_degps') is not None:
+                seg['peak_degps'] = round(seg['peak_degps'] * r, 1)
+            if seg.get('peak_time_s') is not None:
+                seg['peak_time_s'] = round(seg['peak_time_s'] / r, 4)
+            seg['series_degps'] = [None if v is None else v * r for v in seg.get('series_degps', [])]
+        lags = ks.get('inter_peak_lags_ms', {})
+        for k in list(lags):
+            if lags[k] is not None:
+                lags[k] = round(lags[k] / r, 1)
+
     with open(out_path, 'w') as fp:
         json.dump({'summary': summary, 'frames': frames}, fp)
 

@@ -54,7 +54,8 @@ export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }
   const order = ks.sequence_order || [];
   const lags = ks.inter_peak_lags_ms || {};
   const properOrder = order.join(',') === 'pelvis,trunk,arm';
-  const warnings = [...(ks.segment_warnings || []), ...(pitchcap.warnings || [])];
+  const fmtLag = (v) => (v == null ? '—' : `${v} ms`);  // null lag (dead segment) shows '—', not '— ms'
+  const warnings = [...new Set([...(ks.segment_warnings || []), ...(pitchcap.warnings || [])])];
 
   // Peak time markers (skip invalid segments whose peak_time_s is null).
   const peakLines = ['pelvis', 'trunk', 'arm']
@@ -135,11 +136,11 @@ export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }
       {/* Inter-peak lags */}
       <div className="ks-lags">
         <div className="ks-lag">
-          <span className="ks-lag-val">{lags.pelvis_to_trunk ?? '—'} ms</span>
+          <span className="ks-lag-val">{fmtLag(lags.pelvis_to_trunk)}</span>
           <span className="ks-lag-label">pelvis → trunk</span>
         </div>
         <div className="ks-lag">
-          <span className="ks-lag-val">{lags.trunk_to_arm ?? '—'} ms</span>
+          <span className="ks-lag-val">{fmtLag(lags.trunk_to_arm)}</span>
           <span className="ks-lag-label">trunk → arm</span>
         </div>
       </div>

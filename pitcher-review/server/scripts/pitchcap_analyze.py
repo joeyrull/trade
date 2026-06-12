@@ -150,12 +150,22 @@ def _extract_multiview(video_paths, emit):
     kp2d_views = [p[0] for p in poses]
     conf_views = [p[1] for p in poses]
 
+    # Time-align the views to a common frame window. Triangulation indexes every
+    # view at the same frame index, so they MUST end up the same length whether
+    # or not audio sync applies. Per-clip start = offset - min(offset) handles a
+    # clip that LEADS the reference (negative offset) as well as one that lags,
+    # and is left at 0 if the audio offsets are implausible (e.g. start beyond a
+    # clip's length on a noisy/near-silent track).
+    starts = [0] * len(clips)
     if all(len(c.audio) for c in clips):
         offsets = frame_offsets_from_audio([c.audio for c in clips], fps=cap_fps, sr=clips[0].sr)
-        starts = [max(0, o) for o in offsets]
-        m = min(len(a) - s for a, s in zip(kp2d_views, starts))
-        kp2d_views = [a[s:s + m] for a, s in zip(kp2d_views, starts)]
-        conf_views = [a[s:s + m] for a, s in zip(conf_views, starts)]
+        min_off = min(offsets)
+        cand = [o - min_off for o in offsets]
+        if all(0 <= s < len(a) for s, a in zip(cand, kp2d_views)):
+            starts = cand
+    m = max(0, min(len(a) - s for a, s in zip(kp2d_views, starts)))
+    kp2d_views = [a[s:s + m] for a, s in zip(kp2d_views, starts)]
+    conf_views = [a[s:s + m] for a, s in zip(conf_views, starts)]
 
     intrinsics = [approximate_intrinsics(c.image_size) for c in clips]
     kp3d_world, reproj_err = reconstruct.reconstruct_multiview(kp2d_views, conf_views, intrinsics)
@@ -279,11 +289,19 @@ def _analyze_multiview(video_paths, output_dir, throw_hand, progress_cb):
         }, fp)
 
     hand = 'L' if throw_hand == 'left' else 'R'
-    ks = compute_kinematic_sequence(kp3d_world, motion_fps, handedness=hand,
-                                    cutoffs=DEFAULT_CUTOFFS)
     joint_ok = {C.L_HIP: lh_ok, C.R_HIP: rh_ok,
                 C.L_SHOULDER: ls_ok, C.R_SHOULDER: rs_ok,
                 tc['elbow']: te_ok, tc['wrist']: tw_ok}
+    # Gate untrusted joints to NaN before the kinematic sequence, same as the
+    # monocular path: the per-segment filter bridges short dropouts and a
+    # fully-occluded segment is honestly reported rather than peaking on a
+    # mistracked-but-finite coordinate. (The web metrics above already use the
+    # gap-filled kp3d_world; only the sequence wants the stricter masking.)
+    kp3d_gated = kp3d_world.copy()
+    for ci, ok in joint_ok.items():
+        kp3d_gated[~np.asarray(ok, dtype=bool), ci] = np.nan
+    ks = compute_kinematic_sequence(kp3d_gated, motion_fps, handedness=hand,
+                                    cutoffs=DEFAULT_CUTOFFS)
     tracked = ap._segment_tracked_fractions(joint_ok, hand, n)
 
     summary = {

@@ -78,10 +78,17 @@ def estimate_pose_monocular(frames, fps=30.0, model_path=None):
     lmk = _make_landmarker(model_path)
 
     kp3d_rows, kp2d_rows, vis_rows = [], [], []
+    last_ts = -1
     for i, frame in enumerate(frames):
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        # MediaPipe VIDEO mode requires strictly increasing timestamps; at very
+        # high fps (>=1000) consecutive int(i*1000/fps) values can collide, so
+        # force monotonicity.
         ts_ms = int(i * 1000 / max(fps, 1e-6))
+        if ts_ms <= last_ts:
+            ts_ms = last_ts + 1
+        last_ts = ts_ms
         res = lmk.detect_for_video(mp_img, ts_ms)
 
         kp3d = np.full((C.N_KEYPOINTS, 3), np.nan)

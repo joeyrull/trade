@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 from pitchcap import constants as C
 from pitchcap.filtering import filter_keypoints, interpolate_nans
@@ -61,3 +63,25 @@ def test_dead_arm_joint_sorts_last_and_warns():
     assert res["sequence_order"][-1] == "arm"          # invalid sorts last
     assert any("arm" in w for w in res["segment_warnings"])
     assert np.isfinite(res["segments"]["pelvis"]["peak_degps"])
+
+
+def test_dead_segment_output_is_json_safe():
+    """A segment occluded the whole clip must not put Infinity/NaN into the
+    result — json.dump would emit invalid tokens that break the Node server and
+    browser JSON.parse, making an otherwise-fine analysis unreadable."""
+    fps, T = 240, 300
+    t = np.arange(T) / fps
+    kp = np.zeros((T, C.N_KEYPOINTS, 3))
+    kp[:, C.R_HIP] = [0, 0, 0]; kp[:, C.L_HIP] = [1, 0, 0]
+    kp[:, C.R_SHOULDER] = [0, 1, 0]; kp[:, C.L_SHOULDER] = [1, 1, 0]
+    kp[:, C.L_HIP, 1] += 0.3 * np.exp(-((t - 0.4) ** 2) / (2 * 0.02 ** 2))
+    kp[:, C.R_ELBOW, :] = np.nan                        # throwing arm never seen
+    res = compute_kinematic_sequence(kp, fps, handedness="R")
+
+    # invalid arm -> lag is None (not inf), series uses null (not NaN)
+    assert res["inter_peak_lags_ms"]["trunk_to_arm"] is None
+    assert res["segments"]["arm"]["series_degps"][0] is None
+    # the whole structure round-trips as STRICT JSON (allow_nan=False) — exactly
+    # the constraint JSON.parse enforces on the Node/browser side
+    dumped = json.dumps(res, allow_nan=False)
+    assert "Infinity" not in dumped and "NaN" not in dumped

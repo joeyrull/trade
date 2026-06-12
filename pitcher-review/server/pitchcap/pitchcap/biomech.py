@@ -79,7 +79,11 @@ def compute_kinematic_sequence(kp3d, fps, handedness="R", cutoffs=None):
         series = angular_velocity_degps(vecs[name], fps)
         pv, pt, valid = _peak(series, fps)
         segments[name] = {
-            "series_degps": series.tolist(),
+            # JSON-safe: a dead (occluded-all-clip) segment's series is all NaN,
+            # which json.dump would emit as the invalid ``NaN`` token and break
+            # every JSON.parse consumer (the Node server, the browser). Emit null
+            # for any non-finite sample instead.
+            "series_degps": [None if not np.isfinite(v) else float(v) for v in series],
             "peak_degps": pv,
             # invalid segments report None (inf is only used as a sort key)
             "peak_time_s": pt if valid else None,
@@ -90,9 +94,17 @@ def compute_kinematic_sequence(kp3d, fps, handedness="R", cutoffs=None):
             warnings.append(
                 f"{name}: no valid 3D (occluded/low-confidence all frames)")
     order = sorted(SEGMENTS, key=lambda n: sort_times[n])
+
+    def _lag(a, b):
+        # None (not the inf sort sentinel) when either segment never peaked —
+        # round(inf*1000) is float('inf'), which json.dump emits as the invalid
+        # ``Infinity`` token and breaks JSON.parse downstream.
+        if not (np.isfinite(sort_times[a]) and np.isfinite(sort_times[b])):
+            return None
+        return round((sort_times[a] - sort_times[b]) * 1000, 1)
     lags = {
-        "pelvis_to_trunk": round((sort_times["trunk"] - sort_times["pelvis"]) * 1000, 1),
-        "trunk_to_arm": round((sort_times["arm"] - sort_times["trunk"]) * 1000, 1),
+        "pelvis_to_trunk": _lag("trunk", "pelvis"),
+        "trunk_to_arm": _lag("arm", "trunk"),
     }
     return {
         "fps": fps,
