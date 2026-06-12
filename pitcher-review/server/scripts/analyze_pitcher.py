@@ -53,7 +53,7 @@ def find_ffprobe():
 
 
 def detect_frame_rates(video_path, decoded_frames, cap_fps):
-    """Return (playback_fps, motion_fps) for a video.
+    """Return (playback_fps, motion_fps, confident) for a video.
 
     cv2's CAP_PROP_FPS reports the container's average frame rate, which for
     variable-frame-rate slow-motion exports (e.g. an iPhone 240/300fps slow-mo
@@ -72,12 +72,21 @@ def detect_frame_rates(video_path, decoded_frames, cap_fps):
         it instead, or they read many times too low (and the delivery's
         phases collapse into a handful of frames).
 
-    Falls back to (cap_fps, cap_fps) — today's behaviour — if ffprobe is
+    `confident` is False when r_frame_rate doesn't clearly indicate the true
+    capture rate (see threshold below) — some slow-motion exports (e.g. iPhone
+    "intent=0" HEVC clips) report an r_frame_rate that reflects neither the
+    sensor rate nor the playback rate, so motion_fps falls back to
+    playback_fps but may still understate the true rate by the clip's actual
+    slow-mo factor. When a second camera's rate IS confidently detected,
+    analysis.js cross-correlates the two clips' motion to recover the true
+    rate for the unconfident one.
+
+    Falls back to (cap_fps, cap_fps, True) — today's behaviour — if ffprobe is
     unavailable or the probe doesn't yield usable numbers.
     """
     ffprobe = find_ffprobe()
     if not ffprobe or decoded_frames <= 0:
-        return cap_fps, cap_fps
+        return cap_fps, cap_fps, True
 
     try:
         out = subprocess.run(
@@ -91,10 +100,10 @@ def detect_frame_rates(video_path, decoded_frames, cap_fps):
         duration = float(info['duration'])
         r_frame_rate = float(Fraction(info['r_frame_rate']))
     except Exception:
-        return cap_fps, cap_fps
+        return cap_fps, cap_fps, True
 
     if duration <= 0 or r_frame_rate <= 0:
-        return cap_fps, cap_fps
+        return cap_fps, cap_fps, True
 
     # A genuine slow-motion capture (120/240/300fps recorded, ~30fps playback)
     # has a ratio of 4x or more. Ordinary variable-frame-rate footage (e.g. a
@@ -104,8 +113,9 @@ def detect_frame_rates(video_path, decoded_frames, cap_fps):
     # the slow-mo floor and above realistic VFR drift, so it cleanly separates
     # the two cases.
     playback_fps = decoded_frames / duration
-    motion_fps = r_frame_rate if r_frame_rate >= playback_fps * 2.0 else playback_fps
-    return playback_fps, motion_fps
+    confident = r_frame_rate >= playback_fps * 2.0
+    motion_fps = r_frame_rate if confident else playback_fps
+    return playback_fps, motion_fps, confident
 
 
 # ── Model download ────────────────────────────────────────────────────────────
@@ -498,6 +508,137 @@ def phase_for_frame(phases, i):
     return 'setup'
 
 
+def compute_metrics(motion_fps, n, hip_angs, sho_angs, trunk_angs, elbow_angs,
+                     elbow_ok, hip_ang_ok, sho_ang_ok, low_conf,
+                     lay, tey, wrist_disp, elbow_height_pct):
+    """Compute per-frame motion metrics, phases, and the motion_fps-dependent
+    summary fields from the raw (pre-filter) angle/position series.
+
+    Everything here is a function of motion_fps alone — the inputs are
+    motion_fps-independent per-frame series extracted from pose tracking.
+    Used both for the initial analysis and to rebuild a clip's metrics with a
+    corrected motion_fps after cross-camera sync (see analysis.js and the
+    --rebuild CLI mode below).
+    """
+    hip_s   = lowpass(hip_angs,   motion_fps, ROT_CUTOFF_HZ)
+    sho_s   = lowpass(sho_angs,   motion_fps, ROT_CUTOFF_HZ)
+    trunk_s = lowpass(trunk_angs, motion_fps, ROT_CUTOFF_HZ)
+    elbow_s = lowpass(elbow_angs, motion_fps, ARM_CUTOFF_HZ)
+    hip_vel   = derivative(hip_s,   motion_fps)
+    chest_vel = derivative(sho_s,   motion_fps)
+    arm_vel   = derivative(elbow_s, motion_fps)
+
+    frame_metrics = []
+    for i in range(n):
+        # Hip-shoulder separation is the *short* angular distance between the
+        # two lines, wrapped to [-180, 180] — after unwrapping, hip_s/sho_s
+        # can differ by more than 180 deg even though the true separation
+        # (the X-factor) never exceeds that.
+        hss = ((hip_s[i] - sho_s[i] + 180) % 360) - 180
+        # Wrap rotation angles back to (-180, 180] for display, now that the
+        # unwrapped series has done its job for hss/velocity above.
+        hip_disp = ((hip_s[i] + 180) % 360) - 180
+        sho_disp = ((sho_s[i] + 180) % 360) - 180
+
+        frame_metrics.append({
+            'hip_rotation':         round(hip_disp,       2),
+            'shoulder_rotation':    round(sho_disp,       2),
+            'hip_shoulder_sep':     round(abs(hss),        2),
+            'elbow_angle':          round(elbow_s[i],     2),
+            'elbow_height_pct':     elbow_height_pct[i],
+            'hip_rotation_speed':   round(hip_vel[i],     2),
+            'chest_rotation_speed': round(chest_vel[i],   2),
+            'arm_speed':            round(arm_vel[i],     2),
+            'trunk_tilt':           round(trunk_s[i],     2),
+            'low_confidence':       bool(low_conf[i]),
+        })
+
+    wrist_speed = [d * motion_fps for d in wrist_disp]
+    phases = detect_phases(lay, tey, wrist_speed, motion_fps)
+    frame_phases = [phase_for_frame(phases, i) for i in range(n)]
+
+    # Summary
+    arm_speeds   = [abs(m['arm_speed'])            for m in frame_metrics]
+    hip_speeds   = [abs(m['hip_rotation_speed'])   for m in frame_metrics]
+    chest_speeds = [abs(m['chest_rotation_speed']) for m in frame_metrics]
+    hss_vals     = [m['hip_shoulder_sep']          for m in frame_metrics]
+    release_f  = phases.get('release',      (0, 0))[0]
+    mer_f      = phases.get('acceleration', (0, 0))[0]
+    fs_f       = phases.get('foot_strike',  (0, 0))[0]
+    ss_f       = phases.get('stride',       (0, 0))[0]
+
+    # Peak-search windows. Every peak the kinetic chain produces fires between
+    # the lead foot planting and shortly after release, so restrict the search
+    # to that span. This is what stops a foreshortened-arm glitch back in the
+    # windup from being reported as the "peak" arm speed (it previously surfaced
+    # a physically impossible ~2500 deg/s and even inverted the hip->chest->arm
+    # sequencing). Per-metric validity masks keep each peak on frames where
+    # *that* measurement was trustworthy, rather than the global low-conf union.
+    sec = lambda s: int(round(s * motion_fps))
+    rot_lo  = max(0, fs_f - sec(0.10))   # hips can fire just before foot strike
+    spd_hi  = min(n - 1, release_f + sec(0.15))
+    arm_hi  = min(n - 1, release_f + sec(0.20))
+    valid_arm = elbow_ok
+    valid_rot = [bool(hip_ang_ok[i] and sho_ang_ok[i]) for i in range(n)]
+
+    arm_peak_f,   arm_peak_lc   = best_peak(arm_speeds,   valid_arm, fs_f,   arm_hi, n)
+    hip_peak_f,   hip_peak_lc   = best_peak(hip_speeds,   valid_rot, rot_lo, spd_hi, n)
+    chest_peak_f, chest_peak_lc = best_peak(chest_speeds, valid_rot, rot_lo, spd_hi, n)
+    hss_peak_f,   hss_peak_lc   = best_peak(hss_vals,     valid_rot, ss_f,   spd_hi, n)
+
+    # Per-phase tracking confidence — surfaces *where* in the delivery the
+    # pose tracking was/wasn't trustworthy, since an overall percentage can
+    # hide a phase (e.g. acceleration/release) that's entirely low-confidence.
+    phase_confidence = {}
+    for name, (s, e) in phases.items():
+        seg = low_conf[s:e + 1]
+        phase_confidence[name] = round(100.0 * (1 - sum(seg) / len(seg)), 1) if seg else 100.0
+
+    summary_fields = {
+        'motion_fps': round(motion_fps, 2),
+        'phase_confidence': phase_confidence,
+        'phases': {k: {'start': int(v[0]), 'end': int(v[1])} for k, v in phases.items()},
+        'peak': {
+            'max_arm_speed':          round(arm_speeds[arm_peak_f], 1),
+            'max_arm_speed_frame':    arm_peak_f,
+            'max_arm_speed_low_confidence': arm_peak_lc,
+            'max_hip_rotation_speed':   round(hip_speeds[hip_peak_f], 1),
+            'max_hip_rotation_speed_frame': hip_peak_f,
+            'max_hip_rotation_speed_low_confidence': hip_peak_lc,
+            'max_chest_rotation_speed':   round(chest_speeds[chest_peak_f], 1),
+            'max_chest_rotation_speed_frame': chest_peak_f,
+            'max_chest_rotation_speed_low_confidence': chest_peak_lc,
+            'max_hip_shoulder_sep':   round(hss_vals[hss_peak_f], 1),
+            'max_hss_frame':          hss_peak_f,
+            'max_hss_low_confidence': hss_peak_lc,
+            'arm_speed_at_release':   round(arm_speeds[release_f], 1) if release_f < n else 0,
+            'arm_speed_at_release_low_confidence': (not valid_arm[release_f]) if release_f < n else False,
+            'hss_at_foot_strike':     round(hss_vals[fs_f], 1),
+            'hss_at_foot_strike_low_confidence': bool(not valid_rot[fs_f]),
+        },
+        'key_frames': {
+            'foot_strike':  int(fs_f),
+            'max_ext_rot':  int(mer_f),
+            'release':      int(release_f),
+        },
+        # Kinetic-chain sequencing: efficient deliveries fire hips, then chest,
+        # then arm — each peak progressively later, like links in a whip. The
+        # ordering is only meaningful when each peak it depends on was measured
+        # on a trustworthy frame, so it carries its own low-confidence flag.
+        'sequencing': {
+            'hip_peak_frame':    hip_peak_f,
+            'chest_peak_frame':  chest_peak_f,
+            'arm_peak_frame':    arm_peak_f,
+            'hip_to_chest_ms':   round((chest_peak_f - hip_peak_f) / motion_fps * 1000, 1),
+            'chest_to_arm_ms':   round((arm_peak_f - chest_peak_f) / motion_fps * 1000, 1),
+            'hip_to_arm_ms':     round((arm_peak_f - hip_peak_f) / motion_fps * 1000, 1),
+            'proper_order':      hip_peak_f <= chest_peak_f <= arm_peak_f,
+            'low_confidence':    bool(hip_peak_lc or chest_peak_lc or arm_peak_lc),
+        },
+    }
+    return frame_metrics, frame_phases, summary_fields
+
+
 # ── Drawing ───────────────────────────────────────────────────────────────────
 
 def draw_skeleton(frame, lm_list, throw_idx, lead_idx, W, H):
@@ -777,7 +918,6 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
             '_pose_ok':        lm_list is not None,
             '_lm_list':        lm_list,
             '_mask_small':     mask_small,
-            '_wrist_speed':    0.0,
             'landmarks': {},
             'world':     {},
         }
@@ -812,7 +952,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     # `time` field, and UI scrubbing); `motion_fps` is the rate real-world
     # motion advances at and drives every speed/timing calculation below —
     # for slow-motion footage these differ by the slow-mo factor (e.g. 10x).
-    fps, motion_fps = detect_frame_rates(video_path, n, fps)
+    fps, motion_fps, motion_fps_confident = detect_frame_rates(video_path, n, fps)
     for rec in raw:
         rec['time'] = round(rec['frame'] / fps, 4)
 
@@ -844,14 +984,15 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
                       and te_ok[i] and tw_ok[i] and ts_ok[i])
                 for i in range(n)]
 
-    # Wrist speed (smoothed, robust) — used for phase detection
+    # Wrist displacement (smoothed, robust) — used for phase detection.
+    # Stored as a per-frame displacement (not yet scaled to a speed) so it
+    # can be rescaled if motion_fps is later corrected (see compute_metrics).
     twx_p = smooth(twx.tolist(), window=7)
     twy_p = smooth(twy.tolist(), window=7)
-    for i, rec in enumerate(raw):
-        if i == 0:
-            rec['_wrist_speed'] = 0.0
-        else:
-            rec['_wrist_speed'] = float(np.hypot(twx_p[i] - twx_p[i-1], twy_p[i] - twy_p[i-1]) * motion_fps)
+    wrist_disp = [0.0] + [
+        float(np.hypot(twx_p[i] - twx_p[i-1], twy_p[i] - twy_p[i-1]))
+        for i in range(1, n)
+    ]
 
     # ── Rotation angles (transverse plane, x-z) ────────────────────────────
     # atan2(dz, dx) is only meaningful when the hip/shoulder line projects to
@@ -939,95 +1080,36 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
         sho_mx, sho_my = (lsx[i] + rsx[i]) / 2, (lsy[i] + rsy[i]) / 2
         trunk_angs.append(float(np.degrees(np.arctan2(sho_mx - hip_mx, hip_my - sho_my))))
 
-    # Low-pass each angle at a fixed cutoff frequency, then differentiate the
-    # filtered series. Filtering and differentiation share the same smoothed
-    # signal, so displayed angles and reported speeds stay consistent, and the
-    # result is frame-rate independent (the old fixed-window smoothing left the
-    # peak speeds reading up to ~2x high on 240fps footage — see lowpass).
-    hip_s   = lowpass(hip_angs,   motion_fps, ROT_CUTOFF_HZ)
-    sho_s   = lowpass(sho_angs,   motion_fps, ROT_CUTOFF_HZ)
-    trunk_s = lowpass(trunk_angs, motion_fps, ROT_CUTOFF_HZ)
-    # Arm speed = elbow extension/flexion rate. Unlike the angle of the
-    # shoulder->wrist vector, this doesn't blow up under foreshortening: the
-    # 3-point angle is bounded to [0, 180] deg, so its derivative can't sweep
-    # through a near-360 deg discontinuity the way a 2D vector angle can.
-    elbow_s = lowpass(elbow_angs, motion_fps, ARM_CUTOFF_HZ)
-    hip_vel   = derivative(hip_s,   motion_fps)
-    chest_vel = derivative(sho_s,   motion_fps)
-    arm_vel   = derivative(elbow_s, motion_fps)
+    # Per-frame metrics, phases, and motion_fps-dependent summary fields are
+    # computed by compute_metrics() from the raw series above, so they can be
+    # recomputed later with a corrected motion_fps (see --rebuild below and
+    # analysis.js's cross-camera sync) without re-running pose estimation.
+    elbow_height_pct = [round(float(tsy[i] - tey[i]) * 100, 2) for i in range(n)]
+    frame_metrics, frame_phases, mf_summary = compute_metrics(
+        motion_fps, n, hip_angs, sho_angs, trunk_angs, elbow_angs,
+        elbow_ok, hip_ang_ok, sho_ang_ok, low_conf,
+        lay.tolist(), tey.tolist(), wrist_disp, elbow_height_pct)
 
-    # Per-frame metrics
     for i, rec in enumerate(raw):
-        # Hip-shoulder separation is the *short* angular distance between the
-        # two lines, wrapped to [-180, 180] — after unwrapping, hip_s/sho_s
-        # can differ by more than 180 deg even though the true separation
-        # (the X-factor) never exceeds that.
-        hss = ((hip_s[i] - sho_s[i] + 180) % 360) - 180
-        elbow_h = round(float(tsy[i] - tey[i]) * 100, 2)
-        # Wrap rotation angles back to (-180, 180] for display, now that the
-        # unwrapped series has done its job for hss/velocity above.
-        hip_disp = ((hip_s[i] + 180) % 360) - 180
-        sho_disp = ((sho_s[i] + 180) % 360) - 180
+        rec['metrics'] = frame_metrics[i]
+        rec['phase']   = frame_phases[i]
 
-        rec['metrics'] = {
-            'hip_rotation':         round(hip_disp,       2),
-            'shoulder_rotation':    round(sho_disp,       2),
-            'hip_shoulder_sep':     round(abs(hss),        2),
-            'elbow_angle':          round(elbow_s[i],     2),
-            'elbow_height_pct':     elbow_h,
-            'hip_rotation_speed':   round(hip_vel[i],     2),
-            'chest_rotation_speed': round(chest_vel[i],   2),
-            'arm_speed':            round(arm_vel[i],     2),
-            'trunk_tilt':           round(trunk_s[i],     2),
-            'low_confidence':       bool(low_conf[i]),
-        }
-
-    # Phases
-    wrist_speed = [r['_wrist_speed'] for r in raw]
-    phases = detect_phases(lay.tolist(), tey.tolist(), wrist_speed, motion_fps)
-    for i, rec in enumerate(raw):
-        rec['phase'] = phase_for_frame(phases, i)
-
-    # Summary
-    arm_speeds   = [abs(r['metrics']['arm_speed'])           for r in raw]
-    hip_speeds   = [abs(r['metrics']['hip_rotation_speed'])  for r in raw]
-    chest_speeds = [abs(r['metrics']['chest_rotation_speed']) for r in raw]
-    hss_vals     = [r['metrics']['hip_shoulder_sep']         for r in raw]
-    release_f  = phases.get('release',      (0, 0))[0]
-    mer_f      = phases.get('acceleration', (0, 0))[0]
-    fs_f       = phases.get('foot_strike',  (0, 0))[0]
-    ss_f       = phases.get('stride',       (0, 0))[0]
-
-    # Peak-search windows. Every peak the kinetic chain produces fires between
-    # the lead foot planting and shortly after release, so restrict the search
-    # to that span. This is what stops a foreshortened-arm glitch back in the
-    # windup from being reported as the "peak" arm speed (it previously surfaced
-    # a physically impossible ~2500 deg/s and even inverted the hip->chest->arm
-    # sequencing). Per-metric validity masks keep each peak on frames where
-    # *that* measurement was trustworthy, rather than the global low-conf union.
-    sec = lambda s: int(round(s * motion_fps))
-    rot_lo  = max(0, fs_f - sec(0.10))   # hips can fire just before foot strike
-    spd_hi  = min(n - 1, release_f + sec(0.15))
-    arm_hi  = min(n - 1, release_f + sec(0.20))
-    valid_arm = elbow_ok
-    valid_rot = [bool(hip_ang_ok[i] and sho_ang_ok[i]) for i in range(n)]
-
-    arm_peak_f,   arm_peak_lc   = best_peak(arm_speeds,   valid_arm, fs_f,   arm_hi, n)
-    hip_peak_f,   hip_peak_lc   = best_peak(hip_speeds,   valid_rot, rot_lo, spd_hi, n)
-    chest_peak_f, chest_peak_lc = best_peak(chest_speeds, valid_rot, rot_lo, spd_hi, n)
-    hss_peak_f,   hss_peak_lc   = best_peak(hss_vals,     valid_rot, ss_f,   spd_hi, n)
-
-    # Per-phase tracking confidence — surfaces *where* in the delivery the
-    # pose tracking was/wasn't trustworthy, since an overall percentage can
-    # hide a phase (e.g. acceleration/release) that's entirely low-confidence.
-    phase_confidence = {}
-    for name, (s, e) in phases.items():
-        seg = low_conf[s:e + 1]
-        phase_confidence[name] = round(100.0 * (1 - sum(seg) / len(seg)), 1) if seg else 100.0
+    # Save the raw series alongside metrics.json so a corrected motion_fps
+    # can be applied later (via --rebuild) without re-running pose estimation.
+    series_path = os.path.join(output_dir, 'series.json')
+    with open(series_path, 'w') as fp:
+        json.dump({
+            'n': n,
+            'hip_angs': hip_angs, 'sho_angs': sho_angs,
+            'trunk_angs': trunk_angs, 'elbow_angs': elbow_angs,
+            'elbow_ok': elbow_ok, 'hip_ang_ok': hip_ang_ok, 'sho_ang_ok': sho_ang_ok,
+            'low_conf': low_conf, 'lay': lay.tolist(), 'tey': tey.tolist(),
+            'wrist_disp': wrist_disp, 'elbow_height_pct': elbow_height_pct,
+        }, fp)
 
     summary = {
         'fps': round(fps, 2),
-        'motion_fps': round(motion_fps, 2),
+        'motion_fps_confident': motion_fps_confident,
         'total_frames': n,
         'duration_s': round(n / fps, 3),
         'throw_hand': throw_hand,
@@ -1038,45 +1120,7 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
             'applied': cropped,
             'frame_pct': round(100.0 * roi_w * roi_h, 1),
         },
-        'phase_confidence': phase_confidence,
-        'phases': {k: {'start': int(v[0]), 'end': int(v[1])} for k, v in phases.items()},
-        'peak': {
-            'max_arm_speed':          round(arm_speeds[arm_peak_f], 1),
-            'max_arm_speed_frame':    arm_peak_f,
-            'max_arm_speed_low_confidence': arm_peak_lc,
-            'max_hip_rotation_speed':   round(hip_speeds[hip_peak_f], 1),
-            'max_hip_rotation_speed_frame': hip_peak_f,
-            'max_hip_rotation_speed_low_confidence': hip_peak_lc,
-            'max_chest_rotation_speed':   round(chest_speeds[chest_peak_f], 1),
-            'max_chest_rotation_speed_frame': chest_peak_f,
-            'max_chest_rotation_speed_low_confidence': chest_peak_lc,
-            'max_hip_shoulder_sep':   round(hss_vals[hss_peak_f], 1),
-            'max_hss_frame':          hss_peak_f,
-            'max_hss_low_confidence': hss_peak_lc,
-            'arm_speed_at_release':   round(arm_speeds[release_f], 1) if release_f < n else 0,
-            'arm_speed_at_release_low_confidence': (not valid_arm[release_f]) if release_f < n else False,
-            'hss_at_foot_strike':     round(hss_vals[fs_f], 1),
-            'hss_at_foot_strike_low_confidence': bool(not valid_rot[fs_f]),
-        },
-        'key_frames': {
-            'foot_strike':  int(fs_f),
-            'max_ext_rot':  int(mer_f),
-            'release':      int(release_f),
-        },
-        # Kinetic-chain sequencing: efficient deliveries fire hips, then chest,
-        # then arm — each peak progressively later, like links in a whip. The
-        # ordering is only meaningful when each peak it depends on was measured
-        # on a trustworthy frame, so it carries its own low-confidence flag.
-        'sequencing': {
-            'hip_peak_frame':    hip_peak_f,
-            'chest_peak_frame':  chest_peak_f,
-            'arm_peak_frame':    arm_peak_f,
-            'hip_to_chest_ms':   round((chest_peak_f - hip_peak_f) / motion_fps * 1000, 1),
-            'chest_to_arm_ms':   round((arm_peak_f - chest_peak_f) / motion_fps * 1000, 1),
-            'hip_to_arm_ms':     round((arm_peak_f - hip_peak_f) / motion_fps * 1000, 1),
-            'proper_order':      hip_peak_f <= chest_peak_f <= arm_peak_f,
-            'low_confidence':    bool(hip_peak_lc or chest_peak_lc or arm_peak_lc),
-        },
+        **mf_summary,
     }
 
     # ── Pass 2: annotate video ─────────────────────────────────────────────
@@ -1175,15 +1219,76 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
     return {'annotated_video': ann_path, 'metrics': metrics_path}
 
 
+# ── Rebuild (motion_fps correction) ─────────────────────────────────────────
+
+def rebuild_metrics(series_path, metrics_path, motion_fps, out_path):
+    """Recompute per-frame metrics, phases, and summary fields for a clip
+    whose motion_fps was found to be wrong (see analysis.js's cross-camera
+    correlation). Reuses the motion_fps-independent raw series saved by
+    analyze_video() instead of re-running pose estimation.
+    """
+    with open(series_path) as fp:
+        series = json.load(fp)
+    with open(metrics_path) as fp:
+        existing = json.load(fp)
+
+    n = series['n']
+    frame_metrics, frame_phases, mf_summary = compute_metrics(
+        motion_fps, n,
+        series['hip_angs'], series['sho_angs'], series['trunk_angs'], series['elbow_angs'],
+        series['elbow_ok'], series['hip_ang_ok'], series['sho_ang_ok'], series['low_conf'],
+        series['lay'], series['tey'], series['wrist_disp'], series['elbow_height_pct'])
+
+    frames = existing['frames']
+    for i, fr in enumerate(frames):
+        fr['metrics'] = frame_metrics[i]
+        fr['phase']   = frame_phases[i]
+
+    summary = dict(existing['summary'])
+    motion_fps_detected = summary['motion_fps']
+    summary.update(mf_summary)
+    summary['motion_fps_detected']  = motion_fps_detected
+    summary['motion_fps_corrected'] = True
+
+    with open(out_path, 'w') as fp:
+        json.dump({'summary': summary, 'frames': frames}, fp)
+
+    return {'motion_fps': summary['motion_fps']}
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description='Pitcher side-view biomechanics analyzer')
-    parser.add_argument('video',        help='Input video path')
+    parser.add_argument('video', nargs='?', help='Input video path')
     parser.add_argument('--output-dir', default='./pitcher_analysis')
     parser.add_argument('--throw-hand', choices=['left', 'right'], default='left')
     parser.add_argument('--progress',   action='store_true')
+    parser.add_argument('--rebuild', metavar='SERIES_JSON',
+                         help='Recompute metrics from a saved series.json using '
+                              '--motion-fps, instead of running pose estimation')
+    parser.add_argument('--metrics',    help='Existing metrics.json (required with --rebuild)')
+    parser.add_argument('--motion-fps', type=float, help='Corrected motion_fps (required with --rebuild)')
+    parser.add_argument('--output',     help='Output path for rebuilt metrics.json (required with --rebuild)')
     args = parser.parse_args()
+
+    if args.rebuild:
+        if not (args.metrics and args.motion_fps and args.output):
+            print(json.dumps({'status': 'error', 'error': '--rebuild requires --metrics, --motion-fps, and --output'}),
+                  flush=True, file=sys.stderr)
+            sys.exit(1)
+        try:
+            r = rebuild_metrics(args.rebuild, args.metrics, args.motion_fps, args.output)
+            print(json.dumps({'status': 'done', **r}), flush=True)
+        except Exception as e:
+            import traceback
+            print(json.dumps({'status': 'error', 'error': str(e)}), flush=True, file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
+        return
+
+    if not args.video:
+        parser.error('the following arguments are required: video')
 
     def cb(d):
         if args.progress:

@@ -152,6 +152,81 @@ function crossCorrelateOffset(sig0, sig1, initialOffset) {
   return { offset: Math.round(best.lag * 10000) / 10000, correlation: Math.round(best.corr * 1000) / 1000 };
 }
 
+// Absolute angular difference between two angles, wrapped to [0, 180] —
+// used as a scale-independent "amount of rotation" proxy that doesn't care
+// which direction a joint angle was wound or where it's centered.
+function angDiff(a, b) {
+  const d = ((a - b + 180) % 360 + 360) % 360 - 180;
+  return Math.abs(d);
+}
+
+// Find the lag that maximizes the Pearson correlation between two {t, v}[]
+// signals of durations dur0/dur1, requiring the overlapping span to cover at
+// least 30% of the shorter signal so short, accidental overlaps near the
+// edges don't win on noise alone. Returns null if no lag has a usable span.
+const LAG_SEARCH_GRID = 80;
+
+function bestLag(sig0, sig1, dur0, dur1) {
+  const grid = LAG_SEARCH_GRID;
+  const lagMin = -dur1, lagMax = dur0;
+  const lagStep = (lagMax - lagMin) / grid;
+  const minSpan = 0.3 * Math.min(dur0, dur1);
+  let best = null;
+  for (let lag = lagMin; lag <= lagMax; lag += lagStep) {
+    const lo = Math.max(0, lag), hi = Math.min(dur0, lag + dur1);
+    if (hi - lo < minSpan) continue;
+    const step = (hi - lo) / grid;
+    if (step <= 0) continue;
+    const a = [], b = [];
+    for (let t = lo; t <= hi; t += step) {
+      a.push(interpAt(sig0, t));
+      b.push(interpAt(sig1, t - lag));
+    }
+    const corr = pearson(a, b);
+    if (!best || corr > best.corr) best = { lag, corr };
+  }
+  return best;
+}
+
+// When one camera's motion_fps is ambiguous (couldn't be confidently derived
+// from container metadata, see analyze_pitcher.py's detect_frame_rates),
+// search candidate motion_fps values for it and find the one whose
+// motion-energy signal best cross-correlates with the confident camera's.
+// Candidates are built from frame-to-frame joint-angle deltas — a
+// scale-independent "amount of motion" proxy — multiplied by the candidate
+// rate to turn it into a speed signal comparable to motionSignal()'s.
+const SCALE_SEARCH = { kMin: 1, kMax: 12, kStep: 0.05, minCorr: 0.5 };
+
+function findMotionFpsCorrection(refData, ambData) {
+  const sigRef = motionSignal(refData);
+  const durRef = sigRef[sigRef.length - 1].t;
+
+  const playbackFpsAmb = ambData.summary.fps;
+  const nAmb = ambData.frames.length;
+  const rawDelta = [0];
+  for (let i = 1; i < nAmb; i++) {
+    const f0 = ambData.frames[i - 1].metrics, f1 = ambData.frames[i].metrics;
+    rawDelta.push(
+      angDiff(f1.hip_rotation, f0.hip_rotation) +
+      angDiff(f1.shoulder_rotation, f0.shoulder_rotation) +
+      Math.abs(f1.elbow_angle - f0.elbow_angle)
+    );
+  }
+
+  let best = null;
+  for (let k = SCALE_SEARCH.kMin; k <= SCALE_SEARCH.kMax; k += SCALE_SEARCH.kStep) {
+    const motionFps = playbackFpsAmb * k;
+    const sigCand = rawDelta.map((d, i) => ({ t: i / motionFps, v: d * motionFps }));
+    const durCand = sigCand[sigCand.length - 1].t;
+    const result = bestLag(sigRef, sigCand, durRef, durCand);
+    if (result && (!best || result.corr > best.corr)) {
+      best = { k, motionFps, lag: result.lag, corr: result.corr };
+    }
+  }
+  if (!best || best.corr < SCALE_SEARCH.minCorr) return null;
+  return best;
+}
+
 // Sync the cameras' timelines onto a shared real-world clock (frame index /
 // motion_fps, since slow-motion clips advance their frame index much faster
 // than real time — mixing in playback fps would silently misalign any pair
@@ -221,6 +296,71 @@ function runFusion(job) {
   }
 }
 
+// Minimum scale-correction factor worth acting on. A correction this large
+// (e.g. k≈4.83 turning a misdetected 49.66fps into ~240fps) only fires for
+// genuinely mis-detected slow-mo rates, not normal cross-correlation noise
+// around k=1.
+const MOTION_FPS_CORRECTION_MIN_K = 1.15;
+
+// Called once all cameras have finished analysis. If exactly one camera's
+// motion_fps was ambiguous (see detect_frame_rates in analyze_pitcher.py) and
+// the other was confidently detected, search for a better motion_fps for the
+// ambiguous camera by cross-correlating against the confident camera, and if
+// a clearly-better rate is found, rebuild that camera's metrics with it
+// before computing sync/fusion. This runs the rebuild as a subprocess using
+// the series.json sidecar saved during analysis, so pose estimation and video
+// annotation don't need to be redone.
+function finalizeJob(job) {
+  job.progress = { stage: 'syncing', pct: 100 };
+
+  const finish = () => {
+    job.status = 'done';
+    job.progress = { stage: 'done', pct: 100 };
+    job.sync = computeSync(job);
+    runFusion(job);
+  };
+
+  if (job.cameras.length !== 2) return finish();
+
+  let data;
+  try {
+    data = job.cameras.map(c => JSON.parse(fs.readFileSync(c.metricsPath, 'utf8')));
+  } catch (_) {
+    return finish();
+  }
+
+  const confident = data.map(d => d.summary.motion_fps_confident !== false);
+  let refIdx = -1, ambIdx = -1;
+  if (confident[0] && !confident[1]) { refIdx = 0; ambIdx = 1; }
+  else if (confident[1] && !confident[0]) { refIdx = 1; ambIdx = 0; }
+  if (ambIdx === -1) return finish();
+
+  const correction = findMotionFpsCorrection(data[refIdx], data[ambIdx]);
+  if (!correction || correction.k < MOTION_FPS_CORRECTION_MIN_K) return finish();
+
+  const cam = job.cameras[ambIdx];
+  const seriesPath = path.join(cam.outputDir, 'series.json');
+  if (!fs.existsSync(seriesPath)) return finish();
+
+  const args = [
+    SCRIPT, '--rebuild', seriesPath,
+    '--metrics', cam.metricsPath,
+    '--motion-fps', String(correction.motionFps),
+    '--output', cam.metricsPath,
+  ];
+  const proc = spawn(PYTHON, args);
+  let stderr = '';
+  proc.stderr.on('data', (d) => { stderr += d.toString(); });
+  proc.on('close', (code) => {
+    if (code !== 0) {
+      console.warn(`[motion-fps correction ${job.id} cam${ambIdx}] rebuild failed: ${stderr.trim()}`);
+    } else {
+      console.log(`[motion-fps correction ${job.id} cam${ambIdx}] corrected ${data[ambIdx].summary.motion_fps} -> ${correction.motionFps.toFixed(2)} (corr=${correction.corr.toFixed(2)})`);
+    }
+    finish();
+  });
+}
+
 function runJob(job) {
   job.status = 'running';
   runCamera(job, 0);
@@ -281,10 +421,7 @@ function runCamera(job, camIdx) {
     if (camIdx + 1 < job.cameras.length) {
       runCamera(job, camIdx + 1);
     } else {
-      job.status = 'done';
-      job.progress = { stage: 'done', pct: 100 };
-      job.sync = computeSync(job);
-      runFusion(job);
+      finalizeJob(job);
     }
   });
 }
