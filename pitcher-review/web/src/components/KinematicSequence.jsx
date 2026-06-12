@@ -4,6 +4,7 @@ import {
 } from 'recharts';
 import { useMemo } from 'react';
 import { METRIC_COLORS, STATUS_COLORS } from '../theme';
+import { downsample } from '../lib/chart';
 
 // PitchCap's headline output: the kinematic sequence — pelvis, trunk, and
 // throwing-arm angular velocities (deg/s) over time, when each segment peaks,
@@ -17,12 +18,6 @@ const SEGMENT_COLORS = {
   arm:    METRIC_COLORS.armSpeed,
 };
 const SEGMENT_LABEL = { pelvis: 'Pelvis (hips)', trunk: 'Trunk', arm: 'Throwing arm' };
-
-function downsample(arr, maxPts = 300) {
-  if (arr.length <= maxPts) return arr;
-  const step = Math.ceil(arr.length / maxPts);
-  return arr.filter((_, i) => i % step === 0);
-}
 
 export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }) {
   const ks = pitchcap?.kinematic_sequence;

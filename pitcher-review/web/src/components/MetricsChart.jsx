@@ -4,13 +4,7 @@ import {
 } from 'recharts';
 import { useMemo } from 'react';
 import { PHASE_COLORS, METRIC_COLORS } from '../theme';
-
-// Downsample to at most maxPts for chart performance
-function downsample(arr, maxPts = 300) {
-  if (arr.length <= maxPts) return arr;
-  const step = Math.ceil(arr.length / maxPts);
-  return arr.filter((_, i) => i % step === 0);
-}
+import { downsample } from '../lib/chart';
 
 export default function MetricsChart({ frames, summary, currentFrame, onSeek }) {
   const chartData = useMemo(() => downsample(

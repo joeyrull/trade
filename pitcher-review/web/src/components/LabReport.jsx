@@ -6,12 +6,7 @@ import { useMemo } from 'react';
 import { METRICS_LIBRARY } from '../data/metricsLibrary';
 import LabScorecard from './LabScorecard';
 import { PHASE_COLORS, GRADE_COLORS, gradeColor } from '../theme';
-
-function downsample(arr, maxPts = 300) {
-  if (arr.length <= maxPts) return arr;
-  const step = Math.ceil(arr.length / maxPts);
-  return arr.filter((_, i) => i % step === 0);
-}
+import { downsample } from '../lib/chart';
 
 function grade(val, good, avg) {
   if (val >= good) return { letter: 'A', color: gradeColor('A') };
