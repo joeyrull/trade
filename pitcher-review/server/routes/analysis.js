@@ -9,7 +9,15 @@ const router = express.Router();
 
 const UPLOAD_DIR  = path.join(__dirname, '..', 'uploads');
 const JOBS_DIR    = path.join(__dirname, '..', 'jobs');
-const SCRIPT      = path.join(__dirname, '..', 'scripts', 'analyze_pitcher.py');
+// Analysis engine is selectable: the default MediaPipe analyzer, or the
+// PitchCap bridge (stronger 3D motion capture, emits the same schema). Both
+// are spawned with the identical CLI/stdout contract, so this is a one-line
+// swap. The motion-fps --rebuild step always uses analyze_pitcher.py, which
+// operates purely on the schema-compatible series.json either engine writes.
+const ENGINE         = (process.env.PITCHER_ENGINE || 'pitchcap').toLowerCase();
+const ANALYZE_SCRIPT = path.join(__dirname, '..', 'scripts',
+  ENGINE === 'pitchcap' ? 'pitchcap_analyze.py' : 'analyze_pitcher.py');
+const REBUILD_SCRIPT = path.join(__dirname, '..', 'scripts', 'analyze_pitcher.py');
 const FUSE_SCRIPT = path.join(__dirname, '..', 'scripts', 'fuse_cameras.py');
 const PYTHON      = process.env.PYTHON_BIN || 'python3';
 const LIMIT_MB    = parseInt(process.env.UPLOAD_LIMIT_MB || '500', 10);
@@ -343,7 +351,7 @@ function finalizeJob(job) {
   if (!fs.existsSync(seriesPath)) return finish();
 
   const args = [
-    SCRIPT, '--rebuild', seriesPath,
+    REBUILD_SCRIPT, '--rebuild', seriesPath,
     '--metrics', cam.metricsPath,
     '--motion-fps', String(correction.motionFps),
     '--output', cam.metricsPath,
@@ -371,7 +379,7 @@ function runCamera(job, camIdx) {
   fs.mkdirSync(cam.outputDir, { recursive: true });
 
   const args = [
-    SCRIPT,
+    ANALYZE_SCRIPT,
     cam.uploadPath,
     '--output-dir', cam.outputDir,
     '--throw-hand', job.throwHand,

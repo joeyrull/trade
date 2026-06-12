@@ -974,3 +974,61 @@ body {
   display: inline-block;
 }
 .btn-secondary:hover { border-color: var(--accent); color: var(--text); }
+
+/* ── Kinematic Sequence (PitchCap) ───────────────────────────────────────────── */
+.ks-header { margin-bottom: 16px; }
+.ks-title {
+  font-size: 18px; font-weight: 700; color: var(--text);
+  display: flex; align-items: center; gap: 10px;
+}
+.ks-engine {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-soft);
+  border: 1px solid var(--border-strong); border-radius: 999px; padding: 2px 9px;
+}
+.ks-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+.ks-order {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 16px;
+}
+.ks-order-step { display: inline-flex; align-items: center; gap: 8px; }
+.ks-chip {
+  color: #0d0b09; font-size: 12px; font-weight: 700;
+  border-radius: var(--radius-sm); padding: 4px 10px; white-space: nowrap;
+}
+.ks-arrow { color: var(--text-muted); font-size: 16px; }
+.ks-order-verdict { margin-left: auto; font-size: 12px; font-weight: 600; }
+
+.ks-peaks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+.ks-peak-card {
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 4px;
+}
+.ks-peak-seg { font-size: 12px; font-weight: 700; letter-spacing: 0.03em; }
+.ks-peak-val { font-size: 28px; font-weight: 700; color: var(--text); line-height: 1; }
+.ks-peak-unit { font-size: 13px; color: var(--text-muted); margin-left: 4px; font-weight: 500; }
+.ks-peak-time { font-size: 11px; color: var(--text-muted); }
+
+.ks-lags { display: flex; gap: 12px; margin-bottom: 8px; }
+.ks-lag {
+  flex: 1; background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 14px; display: flex;
+  align-items: baseline; justify-content: space-between;
+}
+.ks-lag-val { font-size: 18px; font-weight: 700; color: var(--accent); }
+.ks-lag-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+.ks-warnings { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ks-warnings li {
+  font-size: 12px; color: var(--warn); background: var(--warn-soft);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 10px;
+}
+.ks-note { font-size: 11px; color: var(--text-muted); margin-top: 14px; line-height: 1.5; }
+.ks-note em { color: var(--text-secondary); font-style: italic; }
+
+@media (max-width: 640px) {
+  .ks-peaks { grid-template-columns: 1fr; }
+  .ks-order-verdict { margin-left: 0; width: 100%; }
+}

@@ -834,9 +834,87 @@ def draw_hud(frame, f_data, phase_name):
                 (pad, y), cv2.FONT_HERSHEY_SIMPLEX, 0.38 * scale, (100, 100, 100), max(1, round(scale)))
 
 
+# ── PitchCap kinematic sequence (optional add-on) ───────────────────────────
+
+# COCO-17 indices used by the vendored PitchCap biomech, keyed by the same
+# landmark names this module already stores in each frame's `world` dict.
+_KINSEQ_NAME_TO_COCO = {
+    'nose': 0,
+    'left_shoulder': 5, 'right_shoulder': 6,
+    'left_elbow': 7, 'right_elbow': 8,
+    'left_wrist': 9, 'right_wrist': 10,
+    'left_hip': 11, 'right_hip': 12,
+    'left_knee': 13, 'right_knee': 14,
+    'left_ankle': 15, 'right_ankle': 16,
+}
+
+
+def attach_kinematic_sequence(summary, raw, motion_fps, throw_hand):
+    """Attach PitchCap's kinematic sequence (pelvis / trunk / throwing-arm
+    angular velocity over time, each segment's peak magnitude, and the
+    proximal→distal peak order + inter-peak lags) as ``summary['pitchcap']``.
+
+    Computed from the MediaPipe *world* landmarks already extracted per frame,
+    via the vendored ``pitchcap`` package. This is purely additive — the
+    trusted per-frame metrics/peaks/sequencing the UI grades against are left
+    exactly as the MediaPipe analyzer produced them; this surfaces PitchCap's
+    distinct biomechanical reading alongside them. Best-effort: any failure
+    (package not vendored, no world landmarks, degenerate clip) leaves the
+    summary unchanged rather than failing the analysis."""
+    try:
+        pkg_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'pitchcap')
+        if pkg_root not in sys.path:
+            sys.path.insert(0, pkg_root)
+        from pitchcap import constants as PC  # noqa: F401
+        from pitchcap.filtering import filter_keypoints
+        from pitchcap.biomech import compute_kinematic_sequence
+    except Exception:
+        return
+
+    n = len(raw)
+    kp3d = np.full((n, 17, 3), np.nan)
+    for i, rec in enumerate(raw):
+        for name, w in rec.get('world', {}).items():
+            ci = _KINSEQ_NAME_TO_COCO.get(name)
+            if ci is not None:
+                kp3d[i, ci] = [w['x'], w['y'], w['z']]
+    if not np.isfinite(kp3d).any():
+        return
+
+    hand = 'L' if throw_hand == 'left' else 'R'
+    try:
+        kp3d_f = filter_keypoints(kp3d, motion_fps, cutoff_hz=15.0)
+        ks = compute_kinematic_sequence(kp3d_f, motion_fps, handedness=hand)
+    except Exception:
+        return
+
+    summary['pitchcap'] = {
+        'engine': 'pitchcap',
+        'mode': 'monocular',
+        'n_cams': 1,
+        'reprojection_error_px': None,
+        'kinematic_sequence': {
+            'fps': ks['fps'],
+            'handedness': ks['handedness'],
+            'sequence_order': ks['sequence_order'],
+            'inter_peak_lags_ms': ks['inter_peak_lags_ms'],
+            'segments': {nm: {
+                'peak_degps': sg['peak_degps'],
+                'peak_time_s': sg['peak_time_s'],
+                'series_degps': sg['series_degps'],
+            } for nm, sg in ks['segments'].items()},
+            'segment_warnings': ks.get('segment_warnings', []),
+        },
+        'warnings': ['single camera: monocular 3D from MediaPipe world landmarks '
+                     '(angular-velocity magnitudes approximate; curve shape and '
+                     'peak timing/order are the reliable readings)'],
+    }
+
+
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
-def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
+def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None,
+                  kinematic_sequence=False):
     os.makedirs(output_dir, exist_ok=True)
     ensure_model()
 
@@ -1313,6 +1391,9 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
         'landmarks': {k: v for k, v in r['landmarks'].items() if isinstance(v, dict)},
     } for r in raw]
 
+    if kinematic_sequence:
+        attach_kinematic_sequence(summary, raw, motion_fps, throw_hand)
+
     output = {'summary': summary, 'frames': json_frames}
     metrics_path = os.path.join(output_dir, 'metrics.json')
     with open(metrics_path, 'w') as fp:
@@ -1367,6 +1448,10 @@ def main():
     parser.add_argument('--output-dir', default='./pitcher_analysis')
     parser.add_argument('--throw-hand', choices=['left', 'right'], default='left')
     parser.add_argument('--progress',   action='store_true')
+    parser.add_argument('--kinematic-sequence', action='store_true',
+                         help='Also compute PitchCap\'s pelvis/trunk/arm kinematic '
+                              'sequence from the world landmarks and attach it under '
+                              'summary.pitchcap')
     parser.add_argument('--rebuild', metavar='SERIES_JSON',
                          help='Recompute metrics from a saved series.json using '
                               '--motion-fps, instead of running pose estimation')
@@ -1398,7 +1483,8 @@ def main():
             print(json.dumps(d), flush=True)
 
     try:
-        r = analyze_video(args.video, args.output_dir, args.throw_hand, cb)
+        r = analyze_video(args.video, args.output_dir, args.throw_hand, cb,
+                          kinematic_sequence=args.kinematic_sequence)
         print(json.dumps({'status': 'done', **r}), flush=True)
     except Exception as e:
         import traceback

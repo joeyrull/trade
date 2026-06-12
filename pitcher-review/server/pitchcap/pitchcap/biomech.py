@@ -1,0 +1,87 @@
+"""Segment vectors -> angular velocity -> kinematic sequence."""
+import numpy as np
+from . import constants as C
+
+
+def _unit(v):
+    n = np.linalg.norm(v, axis=-1, keepdims=True)
+    n = np.where(n == 0, 1.0, n)
+    return v / n
+
+
+def segment_unit_vectors(kp3d, handedness="R"):
+    """Return dict of (T,3) unit vectors for pelvis, trunk, arm."""
+    sh = C.R_SHOULDER if handedness == "R" else C.L_SHOULDER
+    el = C.R_ELBOW if handedness == "R" else C.L_ELBOW
+    hip_mid = (kp3d[:, C.L_HIP] + kp3d[:, C.R_HIP]) / 2.0
+    sh_mid = (kp3d[:, C.L_SHOULDER] + kp3d[:, C.R_SHOULDER]) / 2.0
+    return {
+        "pelvis": _unit(kp3d[:, C.L_HIP] - kp3d[:, C.R_HIP]),
+        "trunk": _unit(sh_mid - hip_mid),
+        "arm": _unit(kp3d[:, el] - kp3d[:, sh]),
+    }
+
+
+def angular_velocity_degps(unit_vecs, fps):
+    """|u x du/dt| in deg/s for a (T,3) sequence of unit vectors."""
+    u = np.asarray(unit_vecs, dtype=np.float64)
+    dudt = np.gradient(u, axis=0) * fps          # central difference
+    omega = np.cross(u, dudt)                     # (T,3) rad/s
+    return np.degrees(np.linalg.norm(omega, axis=1))
+
+
+from scipy.signal import find_peaks
+
+SEGMENTS = ["pelvis", "trunk", "arm"]
+
+
+def _peak(series, fps):
+    """Return (peak_value, peak_time_s, valid).
+
+    NaN-aware: a series with no finite values is a dead segment (joint
+    occluded/low-confidence on every frame) and returns the invalid
+    sentinel ``(0.0, inf, False)`` so callers can sort it last and warn.
+    Otherwise the peak is computed over the finite samples (NaNs replaced
+    with -inf for ``find_peaks``) and ``valid`` is True.
+    """
+    series = np.asarray(series, dtype=np.float64)
+    finite = np.isfinite(series)
+    if not finite.any():
+        return 0.0, float("inf"), False
+    safe = np.where(finite, series, -np.inf)
+    peaks, _ = find_peaks(safe)
+    idx = peaks[np.argmax(safe[peaks])] if len(peaks) else int(np.nanargmax(safe))
+    return float(series[idx]), idx / fps, True
+
+
+def compute_kinematic_sequence(kp3d, fps, handedness="R"):
+    vecs = segment_unit_vectors(kp3d, handedness=handedness)
+    segments, sort_times = {}, {}
+    warnings = []
+    for name in SEGMENTS:
+        series = angular_velocity_degps(vecs[name], fps)
+        pv, pt, valid = _peak(series, fps)
+        segments[name] = {
+            "series_degps": series.tolist(),
+            "peak_degps": pv,
+            # invalid segments report None (inf is only used as a sort key)
+            "peak_time_s": pt if valid else None,
+        }
+        # invalid -> inf, so dead segments sort LAST in sequence_order
+        sort_times[name] = pt
+        if not valid:
+            warnings.append(
+                f"{name}: no valid 3D (occluded/low-confidence all frames)")
+    order = sorted(SEGMENTS, key=lambda n: sort_times[n])
+    lags = {
+        "pelvis_to_trunk": round((sort_times["trunk"] - sort_times["pelvis"]) * 1000, 1),
+        "trunk_to_arm": round((sort_times["arm"] - sort_times["trunk"]) * 1000, 1),
+    }
+    return {
+        "fps": fps,
+        "handedness": handedness,
+        "segments": segments,
+        "sequence_order": order,
+        "inter_peak_lags_ms": lags,
+        "segment_warnings": warnings,
+    }

@@ -4,10 +4,11 @@ import PhaseTimeline from './PhaseTimeline';
 import SummaryReport from './SummaryReport';
 import PoseOverlay from './PoseOverlay';
 import LabReport from './LabReport';
+import KinematicSequence from './KinematicSequence';
 import VideoControls from './VideoControls';
 import { PHASE_COLORS, METRIC_COLORS, STATUS_COLORS } from '../theme';
 
-const TABS = ['Overview', 'Charts', 'Phases', 'Lab Report', 'Annotated Video'];
+const BASE_TABS = ['Overview', 'Charts', 'Phases', 'Lab Report', 'Annotated Video'];
 
 const ANGLE_LABELS = {
   side:          'Side view',
@@ -67,6 +68,13 @@ export default function AnalysisViewer({ result }) {
   }, [summary.fps]);
 
   const frame = frames[currentFrame] || frames[0];
+
+  // The "Kinematic Sequence" tab only exists for analyses produced by the
+  // PitchCap engine (which attaches summary.pitchcap).
+  const hasPitchCap = !!summary.pitchcap;
+  const TABS = hasPitchCap
+    ? ['Overview', 'Kinematic Sequence', 'Charts', 'Phases', 'Lab Report', 'Annotated Video']
+    : BASE_TABS;
 
   return (
     <div className="viewer">
@@ -148,6 +156,9 @@ export default function AnalysisViewer({ result }) {
       <div className="tab-content">
         {tab === 'Overview' && (
           <SummaryReport summary={summary} frames={frames} />
+        )}
+        {tab === 'Kinematic Sequence' && hasPitchCap && (
+          <KinematicSequence pitchcap={summary.pitchcap} />
         )}
         {tab === 'Charts' && (
           <MetricsChart frames={frames} summary={summary} currentFrame={currentFrame} onSeek={seekToFrame} />
