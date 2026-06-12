@@ -1006,10 +1006,13 @@ body {
   background: var(--bg-elevated); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 4px;
 }
+.ks-peak-card.low-conf { border-color: var(--warn); background: var(--warn-soft); }
 .ks-peak-seg { font-size: 12px; font-weight: 700; letter-spacing: 0.03em; }
 .ks-peak-val { font-size: 28px; font-weight: 700; color: var(--text); line-height: 1; }
 .ks-peak-unit { font-size: 13px; color: var(--text-muted); margin-left: 4px; font-weight: 500; }
 .ks-peak-time { font-size: 11px; color: var(--text-muted); }
+.ks-peak-track { font-size: 10px; color: var(--text-muted); letter-spacing: 0.02em; }
+.ks-peak-card.low-conf .ks-peak-track { color: var(--warn); }
 
 .ks-lags { display: flex; gap: 12px; margin-bottom: 8px; }
 .ks-lag {

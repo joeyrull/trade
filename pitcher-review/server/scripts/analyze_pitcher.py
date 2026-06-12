@@ -849,7 +849,25 @@ _KINSEQ_NAME_TO_COCO = {
 }
 
 
-def attach_kinematic_sequence(summary, raw, motion_fps, throw_hand):
+def _segment_tracked_fractions(joint_ok, handedness, n):
+    """Fraction of frames where every joint a biomech segment depends on was
+    validly tracked. Returns ``None`` per segment when masks are unavailable."""
+    if not joint_ok or n == 0:
+        return {}
+    sh = 6 if handedness == 'R' else 5      # throwing shoulder (R/L)
+    el = 8 if handedness == 'R' else 7      # throwing elbow (R/L)
+    deps = {'pelvis': [11, 12], 'trunk': [11, 12, 5, 6], 'arm': [sh, el]}
+
+    def frac(idxs):
+        if any(ci not in joint_ok for ci in idxs):
+            return None
+        good = sum(1 for i in range(n) if all(joint_ok[ci][i] for ci in idxs))
+        return round(good / n, 3)
+
+    return {name: frac(idxs) for name, idxs in deps.items()}
+
+
+def attach_kinematic_sequence(summary, raw, motion_fps, throw_hand, joint_ok=None):
     """Attach PitchCap's kinematic sequence (pelvis / trunk / throwing-arm
     angular velocity over time, each segment's peak magnitude, and the
     proximal→distal peak order + inter-peak lags) as ``summary['pitchcap']``.
@@ -860,7 +878,13 @@ def attach_kinematic_sequence(summary, raw, motion_fps, throw_hand):
     exactly as the MediaPipe analyzer produced them; this surfaces PitchCap's
     distinct biomechanical reading alongside them. Best-effort: any failure
     (package not vendored, no world landmarks, degenerate clip) leaves the
-    summary unchanged rather than failing the analysis."""
+    summary unchanged rather than failing the analysis.
+
+    ``joint_ok`` (optional) maps a COCO-17 index -> per-frame validity (the same
+    robust per-landmark masks the rest of the analysis uses). Untrusted joints
+    are dropped to NaN so PitchCap's filter interpolates short dropouts and a
+    segment that's occluded all clip is honestly reported as "not reconstructed"
+    rather than producing a peak from mis-tracked world coordinates."""
     try:
         pkg_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'pitchcap')
         if pkg_root not in sys.path:
@@ -876,8 +900,11 @@ def attach_kinematic_sequence(summary, raw, motion_fps, throw_hand):
     for i, rec in enumerate(raw):
         for name, w in rec.get('world', {}).items():
             ci = _KINSEQ_NAME_TO_COCO.get(name)
-            if ci is not None:
-                kp3d[i, ci] = [w['x'], w['y'], w['z']]
+            if ci is None:
+                continue
+            if joint_ok is not None and ci in joint_ok and not joint_ok[ci][i]:
+                continue  # untrusted this frame -> leave NaN for the filter to bridge
+            kp3d[i, ci] = [w['x'], w['y'], w['z']]
     if not np.isfinite(kp3d).any():
         return
 
@@ -887,6 +914,14 @@ def attach_kinematic_sequence(summary, raw, motion_fps, throw_hand):
         ks = compute_kinematic_sequence(kp3d_f, motion_fps, handedness=hand)
     except Exception:
         return
+
+    # Per-segment tracked fraction: what share of frames had every joint that
+    # segment's vector depends on validly tracked. A low fraction (e.g. the
+    # throwing arm on a clip where MediaPipe can't see the elbow) means that
+    # segment's peak/timing was reconstructed mostly from interpolation and
+    # should be read as low-confidence — surfaced so the UI can flag it rather
+    # than presenting an interpolated peak as if it were measured.
+    tracked = _segment_tracked_fractions(joint_ok, hand, len(raw))
 
     summary['pitchcap'] = {
         'engine': 'pitchcap',
@@ -902,6 +937,7 @@ def attach_kinematic_sequence(summary, raw, motion_fps, throw_hand):
                 'peak_degps': sg['peak_degps'],
                 'peak_time_s': sg['peak_time_s'],
                 'series_degps': sg['series_degps'],
+                'tracked_frac': tracked.get(nm),
             } for nm, sg in ks['segments'].items()},
             'segment_warnings': ks.get('segment_warnings', []),
         },
@@ -1392,7 +1428,17 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None,
     } for r in raw]
 
     if kinematic_sequence:
-        attach_kinematic_sequence(summary, raw, motion_fps, throw_hand)
+        # Feed PitchCap's biomech the same robust per-landmark validity the rest
+        # of the analysis uses, keyed by COCO-17 index (hips, both shoulders,
+        # throwing elbow/wrist — the joints its segment vectors need).
+        te_coco = 7 if throw_hand == 'left' else 8   # L_ELBOW / R_ELBOW
+        tw_coco = 9 if throw_hand == 'left' else 10  # L_WRIST / R_WRIST
+        joint_ok = {
+            11: lh_ok, 12: rh_ok,          # L_HIP, R_HIP
+            5: ls_ok, 6: rs_ok,            # L_SHOULDER, R_SHOULDER
+            te_coco: te_ok, tw_coco: tw_ok,
+        }
+        attach_kinematic_sequence(summary, raw, motion_fps, throw_hand, joint_ok)
 
     output = {'summary': summary, 'frames': json_frames}
     metrics_path = os.path.join(output_dir, 'metrics.json')

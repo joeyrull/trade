@@ -98,8 +98,12 @@ export default function KinematicSequence({ pitchcap }) {
           const seg = segments[name];
           if (!seg) return null;
           const invalid = seg.peak_time_s == null;
+          // tracked_frac < 0.5 means the segment's peak came mostly from
+          // interpolated/held joints — flag it as low-confidence.
+          const frac = seg.tracked_frac;
+          const lowConf = frac != null && frac < 0.5;
           return (
-            <div key={name} className="ks-peak-card">
+            <div key={name} className={`ks-peak-card ${lowConf ? 'low-conf' : ''}`}>
               <span className="ks-peak-seg" style={{ color: SEGMENT_COLORS[name] }}>
                 {SEGMENT_LABEL[name] || name}
               </span>
@@ -110,6 +114,11 @@ export default function KinematicSequence({ pitchcap }) {
               <span className="ks-peak-time">
                 {invalid ? 'not reconstructed' : `peak @ ${seg.peak_time_s.toFixed(3)}s`}
               </span>
+              {frac != null && (
+                <span className="ks-peak-track" title="Share of frames where every joint this segment needs was tracked.">
+                  {lowConf ? '⚠ ' : ''}{Math.round(frac * 100)}% tracked
+                </span>
+              )}
             </div>
           );
         })}

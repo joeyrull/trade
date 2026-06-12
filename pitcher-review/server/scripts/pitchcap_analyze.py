@@ -281,6 +281,10 @@ def _analyze_multiview(video_paths, output_dir, throw_hand, progress_cb):
     hand = 'L' if throw_hand == 'left' else 'R'
     kp3d_filt = filter_keypoints(kp3d_world, motion_fps, cutoff_hz=15.0)
     ks = compute_kinematic_sequence(kp3d_filt, motion_fps, handedness=hand)
+    joint_ok = {C.L_HIP: lh_ok, C.R_HIP: rh_ok,
+                C.L_SHOULDER: ls_ok, C.R_SHOULDER: rs_ok,
+                tc['elbow']: te_ok, tc['wrist']: tw_ok}
+    tracked = ap._segment_tracked_fractions(joint_ok, hand, n)
 
     summary = {
         'fps': round(fps, 2),
@@ -303,7 +307,8 @@ def _analyze_multiview(video_paths, output_dir, throw_hand, progress_cb):
                 'inter_peak_lags_ms': ks['inter_peak_lags_ms'],
                 'segments': {nm: {'peak_degps': sg['peak_degps'],
                                   'peak_time_s': sg['peak_time_s'],
-                                  'series_degps': sg['series_degps']}
+                                  'series_degps': sg['series_degps'],
+                                  'tracked_frac': tracked.get(nm)}
                              for nm, sg in ks['segments'].items()},
                 'segment_warnings': ks.get('segment_warnings', []),
             },
