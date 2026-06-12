@@ -158,7 +158,7 @@ export default function AnalysisViewer({ result }) {
           <SummaryReport summary={summary} frames={frames} />
         )}
         {tab === 'Kinematic Sequence' && hasPitchCap && (
-          <KinematicSequence pitchcap={summary.pitchcap} />
+          <KinematicSequence pitchcap={summary.pitchcap} currentFrame={currentFrame} onSeek={seekToFrame} />
         )}
         {tab === 'Charts' && (
           <MetricsChart frames={frames} summary={summary} currentFrame={currentFrame} onSeek={seekToFrame} />

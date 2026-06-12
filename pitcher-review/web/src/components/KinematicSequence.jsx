@@ -24,11 +24,14 @@ function downsample(arr, maxPts = 300) {
   return arr.filter((_, i) => i % step === 0);
 }
 
-export default function KinematicSequence({ pitchcap }) {
+export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }) {
   const ks = pitchcap?.kinematic_sequence;
   const segments = ks?.segments || {};
 
+  // ks.fps is the real-world (motion) rate, so a peak time in seconds maps to a
+  // decoded frame index via t * fps — the same index the video player seeks to.
   const fps = ks?.fps || 30;
+  const seekToTime = (t) => onSeek && t != null && onSeek(Math.round(t * fps));
   const chartData = useMemo(() => {
     const pelvis = segments.pelvis?.series_degps || [];
     const trunk = segments.trunk?.series_degps || [];
@@ -103,7 +106,12 @@ export default function KinematicSequence({ pitchcap }) {
           const frac = seg.tracked_frac;
           const lowConf = frac != null && frac < 0.5;
           return (
-            <div key={name} className={`ks-peak-card ${lowConf ? 'low-conf' : ''}`}>
+            <div
+              key={name}
+              className={`ks-peak-card ${lowConf ? 'low-conf' : ''} ${!invalid && onSeek ? 'seekable' : ''}`}
+              onClick={() => !invalid && seekToTime(seg.peak_time_s)}
+              title={!invalid && onSeek ? 'Jump to this segment\'s peak in the video' : undefined}
+            >
               <span className="ks-peak-seg" style={{ color: SEGMENT_COLORS[name] }}>
                 {SEGMENT_LABEL[name] || name}
               </span>
@@ -140,7 +148,7 @@ export default function KinematicSequence({ pitchcap }) {
       <div className="chart-block">
         <h4 className="chart-title">Segment Angular Velocity (°/s)</h4>
         <ResponsiveContainer width="100%" height={260}>
-          <LineChart data={chartData}>
+          <LineChart data={chartData} onClick={d => d?.activePayload && seekToTime(d.activePayload[0]?.payload?.t)}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis dataKey="t" stroke="var(--text-muted)" tick={{ fontSize: 11 }}
               label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: 'var(--text-muted)', fontSize: 11 }} />
@@ -155,6 +163,7 @@ export default function KinematicSequence({ pitchcap }) {
             {peakLines.map(({ name, t }) => (
               <ReferenceLine key={name} x={t} stroke={SEGMENT_COLORS[name]} strokeDasharray="4 3" strokeOpacity={0.5} />
             ))}
+            <ReferenceLine x={+(currentFrame / fps).toFixed(3)} stroke="var(--text)" strokeOpacity={0.65} />
             <Line type="monotone" dataKey="pelvis" stroke={SEGMENT_COLORS.pelvis} dot={false} strokeWidth={2} connectNulls />
             <Line type="monotone" dataKey="trunk" stroke={SEGMENT_COLORS.trunk} dot={false} strokeWidth={2} connectNulls />
             <Line type="monotone" dataKey="arm" stroke={SEGMENT_COLORS.arm} dot={false} strokeWidth={2} connectNulls />

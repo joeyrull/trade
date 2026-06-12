@@ -1007,6 +1007,8 @@ body {
   border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 4px;
 }
 .ks-peak-card.low-conf { border-color: var(--warn); background: var(--warn-soft); }
+.ks-peak-card.seekable { cursor: pointer; transition: border-color 0.15s, transform 0.1s; }
+.ks-peak-card.seekable:hover { border-color: var(--accent); transform: translateY(-1px); }
 .ks-peak-seg { font-size: 12px; font-weight: 700; letter-spacing: 0.03em; }
 .ks-peak-val { font-size: 28px; font-weight: 700; color: var(--text); line-height: 1; }
 .ks-peak-unit { font-size: 13px; color: var(--text-muted); margin-left: 4px; font-weight: 500; }
