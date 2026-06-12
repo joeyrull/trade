@@ -16,6 +16,7 @@ const ANGLE_LABELS = {
   behind:        'Behind',
   three_quarter: '3/4 angle',
   other:         'Other angle',
+  multiview:     'Multi-view (2 cameras)',
 };
 
 export default function AnalysisViewer({ result }) {

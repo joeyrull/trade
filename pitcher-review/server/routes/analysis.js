@@ -21,6 +21,13 @@ const REBUILD_SCRIPT = path.join(__dirname, '..', 'scripts', 'analyze_pitcher.py
 const FUSE_SCRIPT = path.join(__dirname, '..', 'scripts', 'fuse_cameras.py');
 const PYTHON      = process.env.PYTHON_BIN || 'python3';
 const LIMIT_MB    = parseInt(process.env.UPLOAD_LIMIT_MB || '500', 10);
+// When set (and the PitchCap engine is active), two uploaded cameras are sent to
+// a SINGLE pitchcap_analyze process for true multi-view triangulation (one 3D
+// reconstruction) instead of the default per-camera analysis + fusion. Off by
+// default: it needs rtmlib+onnxruntime in the deployment (the engine falls back
+// to monocular on camera 0 with a warning if they're absent) and the two clips
+// genuinely overlapping in time.
+const MULTIVIEW = process.env.PITCHER_MULTIVIEW === '1' && ENGINE === 'pitchcap';
 
 const CAMERA_ANGLES = ['side', 'front', 'behind', 'three_quarter', 'other'];
 
@@ -49,6 +56,8 @@ function createJob(id, cameraInputs, throwHand) {
       index: i,
       angle: c.angle,
       uploadPath: c.uploadPath,
+      // multi-view: a single camera entry analyzes several clips together
+      uploadPaths: c.uploadPaths || null,
       outputDir: path.join(JOBS_DIR, id, `cam${i}`),
       progress: { stage: 'queued', pct: 0 },
       annotatedVideo: null,
@@ -378,9 +387,10 @@ function runCamera(job, camIdx) {
   const cam = job.cameras[camIdx];
   fs.mkdirSync(cam.outputDir, { recursive: true });
 
+  const videoArgs = cam.uploadPaths && cam.uploadPaths.length ? cam.uploadPaths : [cam.uploadPath];
   const args = [
     ANALYZE_SCRIPT,
-    cam.uploadPath,
+    ...videoArgs,
     '--output-dir', cam.outputDir,
     '--throw-hand', job.throwHand,
     '--progress',
@@ -452,15 +462,23 @@ router.post('/upload', upload.fields([
     return res.status(400).json({ error: 'Invalid camera angle' });
   }
 
-  const cameraInputs = [{ uploadPath: videoFile.path, angle }];
-
   const video2File = req.files?.video2?.[0];
+  let angle2 = null;
   if (video2File) {
-    const angle2 = (req.body.angle2 || 'front').toLowerCase();
+    angle2 = (req.body.angle2 || 'front').toLowerCase();
     if (!CAMERA_ANGLES.includes(angle2)) {
       return res.status(400).json({ error: 'Invalid second camera angle' });
     }
-    cameraInputs.push({ uploadPath: video2File.path, angle: angle2 });
+  }
+
+  let cameraInputs;
+  if (MULTIVIEW && video2File) {
+    // One camera entry that triangulates both clips into a single 3D
+    // reconstruction (pitchcap_analyze receives both video paths).
+    cameraInputs = [{ uploadPaths: [videoFile.path, video2File.path], angle: 'multiview' }];
+  } else {
+    cameraInputs = [{ uploadPath: videoFile.path, angle }];
+    if (video2File) cameraInputs.push({ uploadPath: video2File.path, angle: angle2 });
   }
 
   const id  = uuidv4();
