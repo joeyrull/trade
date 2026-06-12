@@ -890,7 +890,7 @@ def attach_kinematic_sequence(summary, raw, motion_fps, throw_hand, joint_ok=Non
         if pkg_root not in sys.path:
             sys.path.insert(0, pkg_root)
         from pitchcap import constants as PC  # noqa: F401
-        from pitchcap.filtering import filter_keypoints
+        from pitchcap.filtering import DEFAULT_CUTOFFS
         from pitchcap.biomech import compute_kinematic_sequence
     except Exception:
         return
@@ -910,8 +910,10 @@ def attach_kinematic_sequence(summary, raw, motion_fps, throw_hand, joint_ok=Non
 
     hand = 'L' if throw_hand == 'left' else 'R'
     try:
-        kp3d_f = filter_keypoints(kp3d, motion_fps, cutoff_hz=15.0)
-        ks = compute_kinematic_sequence(kp3d_f, motion_fps, handedness=hand)
+        # Per-segment cutoffs (13Hz pelvis/trunk, 18Hz arm) filter each segment's
+        # joints at its own band inside compute_kinematic_sequence.
+        ks = compute_kinematic_sequence(kp3d, motion_fps, handedness=hand,
+                                        cutoffs=DEFAULT_CUTOFFS)
     except Exception:
         return
 

@@ -54,8 +54,25 @@ def _peak(series, fps):
     return float(series[idx]), idx / fps, True
 
 
-def compute_kinematic_sequence(kp3d, fps, handedness="R"):
-    vecs = segment_unit_vectors(kp3d, handedness=handedness)
+def compute_kinematic_sequence(kp3d, fps, handedness="R", cutoffs=None):
+    """Pelvis/trunk/arm angular velocity -> peaks -> sequence order + lags.
+
+    cutoffs: optional ``{segment: cutoff_hz}`` (e.g. ``filtering.DEFAULT_CUTOFFS``
+    = 13Hz pelvis/trunk, 18Hz arm per the design spec). When given, each
+    segment's source joints are zero-lag Butterworth filtered at that segment's
+    own cutoff before differentiation — the arm whip is the sharpest signal so
+    it keeps a wider band, while the noisier rotation angles are filtered
+    harder. A joint shared across segments (e.g. the throwing shoulder, used by
+    both trunk and arm) is filtered independently for each, so no segment is
+    constrained by another's cutoff. When None, ``kp3d`` is used as-is and the
+    caller owns any filtering (backward-compatible default)."""
+    if cutoffs:
+        from .filtering import filter_keypoints
+        cache = {c: filter_keypoints(kp3d, fps, cutoff_hz=c) for c in set(cutoffs.values())}
+        vecs = {name: segment_unit_vectors(cache[cutoffs[name]], handedness=handedness)[name]
+                for name in SEGMENTS}
+    else:
+        vecs = segment_unit_vectors(kp3d, handedness=handedness)
     segments, sort_times = {}, {}
     warnings = []
     for name in SEGMENTS:

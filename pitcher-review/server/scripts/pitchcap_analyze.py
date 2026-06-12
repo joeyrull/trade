@@ -181,7 +181,7 @@ def _analyze_multiview(video_paths, output_dir, throw_hand, progress_cb):
                          'pct': round(cur / max(tot, 1) * 100, 1)})
 
     C, coco_name, coco_to_mp, side_coco = _maps()
-    from pitchcap.filtering import filter_keypoints
+    from pitchcap.filtering import DEFAULT_CUTOFFS
     from pitchcap.biomech import compute_kinematic_sequence
 
     (kp3d_world, kp2d_img, vis, n_cams, reproj_err,
@@ -279,8 +279,8 @@ def _analyze_multiview(video_paths, output_dir, throw_hand, progress_cb):
         }, fp)
 
     hand = 'L' if throw_hand == 'left' else 'R'
-    kp3d_filt = filter_keypoints(kp3d_world, motion_fps, cutoff_hz=15.0)
-    ks = compute_kinematic_sequence(kp3d_filt, motion_fps, handedness=hand)
+    ks = compute_kinematic_sequence(kp3d_world, motion_fps, handedness=hand,
+                                    cutoffs=DEFAULT_CUTOFFS)
     joint_ok = {C.L_HIP: lh_ok, C.R_HIP: rh_ok,
                 C.L_SHOULDER: ls_ok, C.R_SHOULDER: rs_ok,
                 tc['elbow']: te_ok, tc['wrist']: tw_ok}

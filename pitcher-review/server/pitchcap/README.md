@@ -61,9 +61,9 @@ Honest about what at-home markerless can and cannot do:
 1. ✅ **3–4 camera scale consistency.** Reconstruction now runs in normalized coordinates, recovers each view's pose against camera 0, and resolves a single consistent global scale across all cameras (camera 1 defines the scale; cameras ≥3 are rescaled by aligning shared-joint depths). 3–4 views are geometrically consistent. *(See `reconstruct.py`, `tests/test_multiview_scale.py`.)*
 2. ✅ **Lens distortion is applied.** Each view's 2D points are undistorted by that view's own intrinsics (`geometry.normalize_points`) before essential-matrix and triangulation math, so calibrated distortion coefficients are now used. Per-view intrinsics differences are handled too.
 4. ✅ **Cross-view outlier rejection.** Triangulation uses minimal-subset (pairwise) RANSAC when ≥3 views are available, so a single bad keypoint in one view can't drag the 3D estimate.
+3. ✅ **Per-segment filter cutoffs.** `compute_kinematic_sequence(..., cutoffs=DEFAULT_CUTOFFS)` filters each segment's joints at its own band (13 Hz pelvis/trunk, 18 Hz arm) before differentiation, so the sharp arm-whip peak is preserved while the noisier rotation angles are filtered harder. A joint shared across segments is filtered independently for each. *(See `biomech.py`, `tests/test_biomech.py`.)*
 
 **Remaining refinements (not blocking):**
-3. **Single filter cutoff.** All keypoints are filtered at one cutoff (default 15 Hz) rather than per-segment (13 Hz pelvis/trunk, 18 Hz arm). Reasonable at 240fps; per-segment cutoffs are a refinement.
 5. **Full bundle adjustment** (joint refinement of all camera poses + 3D points) is still deferred — the current global-scale resolution is a lighter-weight substitute. Worth adding if real-clip reprojection error is high.
 
 **Not supported by design:** metric (cm) outputs without a checkerboard; lab marker-grade (sub-mm, global-shutter) precision.

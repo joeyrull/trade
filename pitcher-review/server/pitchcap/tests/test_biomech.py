@@ -51,3 +51,37 @@ def test_sequence_order_and_peaks():
     assert res["sequence_order"] == ["pelvis", "trunk", "arm"]
     assert res["segments"]["arm"]["peak_degps"] > 0
     assert res["inter_peak_lags_ms"]["pelvis_to_trunk"] > 0
+
+
+from pitchcap.filtering import DEFAULT_CUTOFFS
+
+
+def test_per_segment_cutoffs_attenuate_arm_jitter():
+    """Per-segment cutoffs filter each segment's joints before differentiation,
+    so high-frequency landmark jitter on the arm doesn't inflate its peak."""
+    fps, T = 240, 300
+    t = np.arange(T) / fps
+    kp = np.zeros((T, C.N_KEYPOINTS, 3))
+    kp[:, C.R_HIP] = [0, 0, 0]; kp[:, C.L_HIP] = [1, 0, 0]
+    kp[:, C.R_SHOULDER] = [0, 1, 0]; kp[:, C.L_SHOULDER] = [1, 1, 0]
+    kp[:, C.R_ELBOW] = [0, 0.5, 0]
+    # 2 Hz real arm motion + 60 Hz jitter on the throwing elbow
+    kp[:, C.R_ELBOW, 0] += 0.3 * np.sin(2 * np.pi * 2 * t)
+    kp[:, C.R_ELBOW, 0] += 0.02 * np.sin(2 * np.pi * 60 * t)
+
+    raw = compute_kinematic_sequence(kp, fps, handedness="R")                       # no filtering
+    filt = compute_kinematic_sequence(kp, fps, handedness="R", cutoffs=DEFAULT_CUTOFFS)
+    # the 18Hz arm cutoff removes the 60Hz-driven velocity spikes
+    assert filt["segments"]["arm"]["peak_degps"] < raw["segments"]["arm"]["peak_degps"]
+    # structure stays valid and the real 2Hz motion survives
+    assert filt["segments"]["arm"]["peak_degps"] > 0
+    assert filt["sequence_order"]
+
+
+def test_cutoffs_none_is_unfiltered_passthrough():
+    """Default (cutoffs=None) must be identical to not passing cutoffs."""
+    fps, T = 240, 120
+    kp = np.random.RandomState(3).randn(T, C.N_KEYPOINTS, 3)
+    a = compute_kinematic_sequence(kp, fps, handedness="R")
+    b = compute_kinematic_sequence(kp, fps, handedness="R", cutoffs=None)
+    assert a["segments"]["arm"]["series_degps"] == b["segments"]["arm"]["series_degps"]

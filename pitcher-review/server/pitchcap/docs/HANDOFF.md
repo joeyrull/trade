@@ -70,8 +70,6 @@ calibration), `calibrate_extrinsic.py`, `triangulate.py`, `monocular.py`, `filte
 
 ## Known limitations / backlog
 
-- Per-segment filter cutoffs not yet wired (single 15 Hz cutoff; spec wants 13 Hz hips/trunk,
-  18 Hz arm).
 - Full bundle adjustment deferred (global-scale resolution is a lighter substitute).
 - Real footage needs: **240fps slo-mo**, clips **trimmed to a single throw (~2s)**, and both
   cameras genuinely **overlapping in time** (audio sync needs a shared event like ball-in-glove).
