@@ -178,7 +178,7 @@ SKELETON_CONNECTIONS = [
 ]
 
 # ── Robustness thresholds ───────────────────────────────────────────────────
-MIN_VISIBILITY   = 0.5   # landmark visibility below this is not trusted
+MIN_VISIBILITY   = 0.35  # landmark visibility below this is not trusted
 MAX_POS_JUMP     = 0.15  # max plausible frame-to-frame landmark move (normalized coords)
 MIN_ROT_VEC_MAG  = 0.035 # min |hip/shoulder line vector| (x-z plane) to trust its angle
 MIN_MASK_CONF    = 0.4   # min person-segmentation confidence to trust a landmark there
@@ -344,6 +344,85 @@ def fill_short_gaps(valid, max_gap, fill):
                 valid[k] = True
         i = j
     return valid
+
+
+def diagnose_landmark_failures(raw, name, min_vis=MIN_VISIBILITY, max_jump=MAX_POS_JUMP, min_mask=MIN_MASK_CONF):
+    """Re-walk a landmark's track with the same last-trusted-position logic
+    as build_robust_series(), but tally *why* each frame fails validity
+    (mutually exclusive, first-applicable cause) instead of building the
+    held series. Diagnostic-only — does not affect build_robust_series or
+    its callers. Returns a dict of frame counts: missing, low_vis, low_mask,
+    pos_jump, ok."""
+    n = len(raw)
+    counts = {'missing': 0, 'low_vis': 0, 'low_mask': 0, 'pos_jump': 0, 'ok': 0}
+    low_vis_values = []
+    last = None
+    for rec in raw:
+        lm = rec['landmarks'].get(name)
+        if lm is None:
+            counts['missing'] += 1
+            continue
+        if lm['v'] < min_vis:
+            counts['low_vis'] += 1
+            low_vis_values.append(lm['v'])
+            continue
+        if mask_confidence(rec.get('_mask_small'), lm['x'], lm['y']) < min_mask:
+            counts['low_mask'] += 1
+            continue
+        if last is not None and ((lm['x'] - last[0]) ** 2 + (lm['y'] - last[1]) ** 2) ** 0.5 > max_jump:
+            counts['pos_jump'] += 1
+            continue
+        counts['ok'] += 1
+        last = (lm['x'], lm['y'], lm['z'])
+    counts['low_vis_values'] = low_vis_values
+    return counts
+
+
+def print_low_conf_diagnostics(raw, n, cropped, roi_norm, roi_w, roi_h,
+                                lh_ok, rh_ok, ls_ok, rs_ok, te_ok, tw_ok, ts_ok,
+                                hip_ang_ok, sho_ang_ok, elbow_ok, low_conf,
+                                te_name, tw_name, ts_name):
+    """Print an stderr-only breakdown of why frames are flagged low_confidence,
+    to help diagnose clips where the annotated skeleton barely renders. Gated
+    by PITCHER_DEBUG_LOWCONF so it doesn't affect normal runs. Purely
+    informational — no effect on metrics.json/series.json/annotated.mp4."""
+    def pct(x):
+        return round(100.0 * x / n, 1) if n else 0.0
+
+    print(f'[diag] crop: cropped={cropped} roi_norm={tuple(round(v, 3) for v in roi_norm)} '
+          f'frame_pct={round(100.0 * roi_w * roi_h, 1)}', file=sys.stderr)
+    print(f'[diag] low_conf: {sum(low_conf)}/{n} ({pct(sum(low_conf))}%)', file=sys.stderr)
+
+    landmarks = [
+        ('left_hip', lh_ok), ('right_hip', rh_ok),
+        ('left_shoulder', ls_ok), ('right_shoulder', rs_ok),
+        (te_name, te_ok), (tw_name, tw_ok), (ts_name, ts_ok),
+    ]
+    for name, ok in landmarks:
+        invalid = sum(1 for v in ok if not v)
+        causes = diagnose_landmark_failures(raw, name)
+        lvv = causes['low_vis_values']
+        lvv_str = (f' (vis range {min(lvv):.3f}-{max(lvv):.3f}, '
+                   f'median {sorted(lvv)[len(lvv) // 2]:.3f})') if lvv else ''
+        print(f'[diag]   {name}: invalid {invalid}/{n} ({pct(invalid)}%) — '
+              f'missing={causes["missing"]} low_vis={causes["low_vis"]}{lvv_str} '
+              f'low_mask={causes["low_mask"]} pos_jump={causes["pos_jump"]}', file=sys.stderr)
+
+    hip_bad = sum(1 for v in hip_ang_ok if not v)
+    sho_bad = sum(1 for v in sho_ang_ok if not v)
+    elbow_bad = sum(1 for v in elbow_ok if not v)
+    print(f'[diag]   hip rot-vec invalid: {hip_bad}/{n} ({pct(hip_bad)}%)', file=sys.stderr)
+    print(f'[diag]   shoulder rot-vec invalid: {sho_bad}/{n} ({pct(sho_bad)}%)', file=sys.stderr)
+    print(f'[diag]   elbow (ts/te/tw) invalid: {elbow_bad}/{n} ({pct(elbow_bad)}%)', file=sys.stderr)
+
+    seven_bad = sum(1 for i in range(n) if not (
+        lh_ok[i] and rh_ok[i] and ls_ok[i] and rs_ok[i] and te_ok[i] and tw_ok[i] and ts_ok[i]))
+    n_low_conf = sum(low_conf)
+    covered = sum(1 for i in range(n) if low_conf[i] and not (
+        lh_ok[i] and rh_ok[i] and ls_ok[i] and rs_ok[i] and te_ok[i] and tw_ok[i] and ts_ok[i]))
+    covered_pct = round(100.0 * covered / n_low_conf, 1) if n_low_conf else 0.0
+    print(f'[diag]   of {n_low_conf} low_conf frames, {covered} ({covered_pct}% of low_conf) '
+          f'are explained by the 7-landmark check alone (7-landmark check fails on {seven_bad}/{n} frames total)', file=sys.stderr)
 
 
 def build_robust_series(raw, name, min_vis=MIN_VISIBILITY, max_jump=MAX_POS_JUMP, min_mask=MIN_MASK_CONF, max_gap=0):
@@ -641,8 +720,13 @@ def compute_metrics(motion_fps, n, hip_angs, sho_angs, trunk_angs, elbow_angs,
 
 # ── Drawing ───────────────────────────────────────────────────────────────────
 
-def draw_skeleton(frame, lm_list, throw_idx, lead_idx, W, H):
-    """lm_list: list of 33 NormalizedLandmark objects."""
+def draw_skeleton(frame, lm_list, throw_idx, lead_idx, W, H, throw_arm_ok=True):
+    """lm_list: list of 33 NormalizedLandmark objects.
+
+    throw_arm_ok: when False, the throwing arm's robust tracking failed this
+    frame (fast/blurry release motion) — skip its highlighted connections and
+    joint markers rather than risk drawing a drifted line, while still
+    drawing the rest of the skeleton (torso, hips, lead arm)."""
     # Scale overlay sizes to the frame resolution (constants below were
     # tuned for a ~960px-wide frame) so the skeleton stays clearly visible
     # on higher-resolution phone footage.
@@ -659,14 +743,15 @@ def draw_skeleton(frame, lm_list, throw_idx, lead_idx, W, H):
             cv2.line(frame, pa, pb, color, max(1, round(thick * scale)))
 
     # Throwing arm (highlighted)
-    for (a, b), color, thick in [
-        ((throw_idx['shoulder'], throw_idx['elbow']), (0, 140, 255), 4),
-        ((throw_idx['elbow'],    throw_idx['wrist']),  (0, 220, 255), 4),
-    ]:
-        pa, va = pt(a)
-        pb, vb = pt(b)
-        if va > 0.3 and vb > 0.3:
-            cv2.line(frame, pa, pb, color, max(1, round(thick * scale)))
+    if throw_arm_ok:
+        for (a, b), color, thick in [
+            ((throw_idx['shoulder'], throw_idx['elbow']), (0, 140, 255), 4),
+            ((throw_idx['elbow'],    throw_idx['wrist']),  (0, 220, 255), 4),
+        ]:
+            pa, va = pt(a)
+            pb, vb = pt(b)
+            if va > 0.3 and vb > 0.3:
+                cv2.line(frame, pa, pb, color, max(1, round(thick * scale)))
 
     # Lead arm
     for (a, b), color, thick in [
@@ -684,6 +769,8 @@ def draw_skeleton(frame, lm_list, throw_idx, lead_idx, W, H):
         if vis < 0.25:
             continue
         if idx in [throw_idx['shoulder'], throw_idx['elbow'], throw_idx['wrist']]:
+            if not throw_arm_ok:
+                continue
             cv2.circle(frame, p, round(8 * scale), (0, 220, 255), -1)
             cv2.circle(frame, p, round(8 * scale), (255, 255, 255), max(1, round(scale)))
         elif idx in [11, 12, 23, 24]:
@@ -984,6 +1071,13 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
                       and te_ok[i] and tw_ok[i] and ts_ok[i])
                 for i in range(n)]
 
+    # Per-region tracking used to draw a partial skeleton: the torso (hips +
+    # shoulders) is tracked reliably on most clips even when the throwing arm
+    # (which moves fastest and foreshortens most) isn't, so a frame being
+    # low_confidence overall shouldn't blank out the whole skeleton.
+    torso_ok     = [lh_ok[i] and rh_ok[i] and ls_ok[i] and rs_ok[i] for i in range(n)]
+    throw_arm_ok = [te_ok[i] and tw_ok[i] and ts_ok[i] for i in range(n)]
+
     # Wrist displacement (smoothed, robust) — used for phase detection.
     # Stored as a per-frame displacement (not yet scaled to a speed) so it
     # can be rescaled if motion_fps is later corrected (see compute_metrics).
@@ -1080,6 +1174,12 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
         sho_mx, sho_my = (lsx[i] + rsx[i]) / 2, (lsy[i] + rsy[i]) / 2
         trunk_angs.append(float(np.degrees(np.arctan2(sho_mx - hip_mx, hip_my - sho_my))))
 
+    if os.environ.get('PITCHER_DEBUG_LOWCONF'):
+        print_low_conf_diagnostics(raw, n, cropped, roi_norm, roi_w, roi_h,
+                                    lh_ok, rh_ok, ls_ok, rs_ok, te_ok, tw_ok, ts_ok,
+                                    hip_ang_ok, sho_ang_ok, elbow_ok, low_conf,
+                                    te_name, tw_name, ts_name)
+
     # Per-frame metrics, phases, and motion_fps-dependent summary fields are
     # computed by compute_metrics() from the raw series above, so they can be
     # recomputed later with a corrected motion_fps (see --rebuild below and
@@ -1137,16 +1237,19 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None):
             break
         rec = raw[i]
 
-        # Only draw the skeleton/elbow-angle overlay when the robust tracker
-        # trusts this frame's landmarks. MediaPipe can keep returning *some*
-        # pose for a frame even after it has lost the pitcher (e.g. locked
-        # onto the wrong region during a fast, blurry release), and drawing
-        # that raw pose produces a skeleton that visibly drifts away from the
-        # pitcher's actual position. The HUD's low-confidence badge already
-        # communicates "tracking lost" for these frames.
-        if rec['_pose_ok'] and rec['_lm_list'] and not rec['metrics']['low_confidence']:
-            draw_skeleton(bgr, rec['_lm_list'], throw_idx, lead_idx, W, H)
-            if te_name in rec['landmarks']:
+        # Draw the skeleton whenever the torso (hips + shoulders) is tracked
+        # reliably — this is true for almost all frames even on clips where
+        # the throwing arm's tracking is unreliable. The throwing arm's own
+        # connections/joints are additionally gated on throw_arm_ok inside
+        # draw_skeleton: MediaPipe can keep returning *some* pose for that arm
+        # after losing it (e.g. locked onto the wrong region during a fast,
+        # blurry release), and drawing that raw pose would visibly drift away
+        # from the pitcher's actual arm. The HUD's low-confidence badge still
+        # communicates "tracking lost" for the overall frame.
+        if rec['_pose_ok'] and rec['_lm_list'] and torso_ok[i]:
+            draw_skeleton(bgr, rec['_lm_list'], throw_idx, lead_idx, W, H,
+                          throw_arm_ok=throw_arm_ok[i])
+            if throw_arm_ok[i] and te_name in rec['landmarks']:
                 hud_scale = max(1.0, W / 960.0)
                 lme = rec['landmarks'][te_name]
                 off  = round(12 * hud_scale)
