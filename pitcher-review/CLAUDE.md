@@ -64,6 +64,11 @@ angular velocity, peak timing/order). Integration detail:
 
 ## Run / test
 
+End users: double-click `start.command` (Mac) / `start.bat` (Windows) at the
+repo root — installs deps on first run, then opens the app in a browser. See
+`README.md`. The commands below are for manual/dev iteration on one piece at
+a time.
+
 ```bash
 # server (port 3002)
 cd server && node index.js
