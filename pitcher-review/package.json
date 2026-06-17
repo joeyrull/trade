@@ -1,0 +1,13 @@
+{
+  "name": "pitcher-review",
+  "private": true,
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=server\" \"npm run dev --workspace=web\"",
+    "install:python": "pip install -r requirements.txt",
+    "start": "concurrently \"npm run start --workspace=server\" \"npm run preview --workspace=web\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}
