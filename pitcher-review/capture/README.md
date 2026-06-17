@@ -79,6 +79,54 @@ parallel (barrier-synced thread start), and writes:
 If `trigger.py` is already running in another terminal/process, pass
 `--no-trigger`.
 
+## Alternative: recording with OBS instead of the Pi rig
+
+No Pi/GPIO/trigger wiring needed — just plug all three cameras into one
+computer and capture them with OBS Studio. Two ways to do it, depending on
+how you set up your OBS scene:
+
+**Recommended: OBS's "Source Record" plugin.** Add all three cameras as
+sources in one scene, then use Source Record to write each source to its own
+file as you record. You end up with 3 independent, full-resolution files —
+upload them straight through the web UI's "add a second/third camera angle"
+flow, no extra script needed. (Or write a `manifest.json` by hand, matching
+the shape `record_sync.py` produces, if you'd rather use `transfer.py`.)
+
+**Simpler but lossier: one composite recording.** If you just tile the three
+camera sources into one scene and hit Record (OBS's default behavior with no
+extra plugin), you get a single file with all three views baked into one
+frame. Use `split_grid.py` to crop it back into three per-camera files plus a
+`manifest.json`:
+
+```bash
+python3 split_grid.py obs_recording.mp4 --out ~/pitches/take_001 \
+    --angles front,side,three_quarter
+```
+
+This defaults to splitting the canvas into equal horizontal thirds; pass
+`--crops WxH+X+Y,...` (matching OBS's own Transform panel for each source) if
+your layout isn't three equal side-by-side tiles. Because every camera comes
+from the same recording, sync between them is frame-exact — better than
+independently started recordings, even without a hardware trigger.
+
+Downside of the composite route: each camera's effective resolution is only
+its slice of the canvas (e.g. ~640x720 per camera if tiling three 1280x720
+sources into one 1920x720-wide canvas), and the crop is a re-encode, not a
+lossless copy. The Source Record path avoids both.
+
+Either way, two things matter regardless of which OBS path you use:
+
+- **Canvas/output frame rate**: OBS samples every source on the canvas's own
+  tick, so the canvas fps is a hard ceiling on what ends up in the recording
+  — set it to at least the cameras' native fps (e.g. 120 for the OV9281s, or
+  whatever your camera supports) in Settings -> Video, not OBS's 30/60
+  default, or you'll silently lose temporal resolution on fast pitching
+  motion.
+- **Calibration resolution**: if you run `calibrate.py`, do it against the
+  *final* per-camera files (post-split, if using the grid route) — the
+  recovered intrinsics are tied to the exact resolution/crop each camera
+  ends up at, not the camera's native output.
+
 ## Sending a take to the web app
 
 On the computer running the `pitcher-review` server (port 3002 by default,
