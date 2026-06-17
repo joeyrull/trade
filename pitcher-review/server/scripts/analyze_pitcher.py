@@ -835,7 +835,7 @@ def draw_hud(frame, f_data, phase_name):
 
     row('Hip Rotation',       m.get('hip_rotation',      0.0))
     row('Shoulder Rot.',      m.get('shoulder_rotation', 0.0))
-    row('Hip-Shoulder Sep',   m.get('hip_shoulder_sep',  0.0), good_thresh=25.0, lo_thresh=10.0)
+    row('Hip-Shoulder Sep',   m.get('hip_shoulder_sep',  0.0), good_thresh=32.0, lo_thresh=10.0)
     row('Elbow Height',       m.get('elbow_height_pct',  0.0), unit='%', good_thresh=5.0)
     row('Elbow Angle',        m.get('elbow_angle',        0.0))
     row('Hip Speed',  abs(m.get('hip_rotation_speed', 0.0)),   unit='deg/s', good_thresh=400.0, lo_thresh=150.0)
