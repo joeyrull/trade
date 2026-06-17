@@ -20,7 +20,7 @@ def butter_lowpass(signal, fps, cutoff_hz, order=4):
 
 
 # segment-specific cutoffs (Hz) per spec
-DEFAULT_CUTOFFS = {"pelvis": 13.0, "trunk": 13.0, "arm": 18.0}
+DEFAULT_CUTOFFS = {"pelvis": 13.0, "trunk": 13.0, "shoulder": 18.0, "elbow": 18.0}
 
 
 def interpolate_nans(arr):

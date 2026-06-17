@@ -10,15 +10,27 @@ def _unit(v):
 
 
 def segment_unit_vectors(kp3d, handedness="R"):
-    """Return dict of (T,3) unit vectors for pelvis, trunk, arm."""
+    """Return dict of (T,3) unit vectors for pelvis, trunk, shoulder, elbow.
+
+    ``shoulder`` is the upper-arm vector (throwing shoulder->elbow); its
+    orientation in the lab frame changes only via motion at the shoulder
+    joint, so its angular velocity is a reasonable proxy for shoulder-segment
+    rotation speed. ``elbow`` is the forearm vector (throwing elbow->wrist);
+    it inherits the upper arm's own motion too (it's not an isolated local
+    joint angle), but during the acceleration/release window elbow extension
+    dominates that signal, consistent with how ``trunk`` already isn't a pure
+    trunk-only signal either (pelvis translation moves it too) — same
+    lab-frame-vector approximation throughout."""
     sh = C.R_SHOULDER if handedness == "R" else C.L_SHOULDER
     el = C.R_ELBOW if handedness == "R" else C.L_ELBOW
+    wr = C.R_WRIST if handedness == "R" else C.L_WRIST
     hip_mid = (kp3d[:, C.L_HIP] + kp3d[:, C.R_HIP]) / 2.0
     sh_mid = (kp3d[:, C.L_SHOULDER] + kp3d[:, C.R_SHOULDER]) / 2.0
     return {
         "pelvis": _unit(kp3d[:, C.L_HIP] - kp3d[:, C.R_HIP]),
         "trunk": _unit(sh_mid - hip_mid),
-        "arm": _unit(kp3d[:, el] - kp3d[:, sh]),
+        "shoulder": _unit(kp3d[:, el] - kp3d[:, sh]),
+        "elbow": _unit(kp3d[:, wr] - kp3d[:, el]),
     }
 
 
@@ -32,7 +44,7 @@ def angular_velocity_degps(unit_vecs, fps):
 
 from scipy.signal import find_peaks
 
-SEGMENTS = ["pelvis", "trunk", "arm"]
+SEGMENTS = ["pelvis", "trunk", "shoulder", "elbow"]
 
 
 def _peak(series, fps):
@@ -55,17 +67,18 @@ def _peak(series, fps):
 
 
 def compute_kinematic_sequence(kp3d, fps, handedness="R", cutoffs=None):
-    """Pelvis/trunk/arm angular velocity -> peaks -> sequence order + lags.
+    """Pelvis/trunk/shoulder/elbow angular velocity -> peaks -> sequence order + lags.
 
     cutoffs: optional ``{segment: cutoff_hz}`` (e.g. ``filtering.DEFAULT_CUTOFFS``
-    = 13Hz pelvis/trunk, 18Hz arm per the design spec). When given, each
-    segment's source joints are zero-lag Butterworth filtered at that segment's
-    own cutoff before differentiation — the arm whip is the sharpest signal so
-    it keeps a wider band, while the noisier rotation angles are filtered
-    harder. A joint shared across segments (e.g. the throwing shoulder, used by
-    both trunk and arm) is filtered independently for each, so no segment is
-    constrained by another's cutoff. When None, ``kp3d`` is used as-is and the
-    caller owns any filtering (backward-compatible default)."""
+    = 13Hz pelvis/trunk, 18Hz shoulder/elbow per the design spec). When given,
+    each segment's source joints are zero-lag Butterworth filtered at that
+    segment's own cutoff before differentiation — the arm-whip segments are
+    the sharpest signal so they keep a wider band, while the noisier rotation
+    angles are filtered harder. A joint shared across segments (e.g. the
+    throwing shoulder, used by both trunk and the shoulder segment) is
+    filtered independently for each, so no segment is constrained by
+    another's cutoff. When None, ``kp3d`` is used as-is and the caller owns
+    any filtering (backward-compatible default)."""
     if cutoffs:
         from .filtering import filter_keypoints
         cache = {c: filter_keypoints(kp3d, fps, cutoff_hz=c) for c in set(cutoffs.values())}
@@ -104,7 +117,8 @@ def compute_kinematic_sequence(kp3d, fps, handedness="R", cutoffs=None):
         return round((sort_times[a] - sort_times[b]) * 1000, 1)
     lags = {
         "pelvis_to_trunk": _lag("trunk", "pelvis"),
-        "trunk_to_arm": _lag("arm", "trunk"),
+        "trunk_to_shoulder": _lag("shoulder", "trunk"),
+        "shoulder_to_elbow": _lag("elbow", "shoulder"),
     }
     return {
         "fps": fps,

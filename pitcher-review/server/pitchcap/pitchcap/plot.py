@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 def plot_sequence(result, out_path):
     fps = result["fps"]
     fig, ax = plt.subplots(figsize=(10, 5))
-    colors = {"pelvis": "tab:blue", "trunk": "tab:green", "arm": "tab:red"}
+    colors = {"pelvis": "tab:blue", "trunk": "tab:green", "shoulder": "tab:red", "elbow": "tab:orange"}
     for name, seg in result["segments"].items():
         series = np.array(seg["series_degps"])
         t = np.arange(len(series)) / fps

@@ -7,9 +7,10 @@ pitcher-review web app, what it adds, and how to run it.
 
 PitchCap is a markerless motion-capture core (RTMPose 2D + multi-view
 triangulation, or MediaPipe monocular fallback) whose headline output is the
-**kinematic sequence**: pelvis → trunk → throwing-arm angular velocities over
-time, each segment's peak magnitude, and the peak **timing/order** (a healthy
-delivery fires proximal→distal). See `README.md` / `docs/…design.md`.
+**kinematic sequence**: pelvis → trunk → shoulder (upper arm) → elbow
+(forearm) angular velocities over time, each segment's peak magnitude, and
+the peak **timing/order** (a healthy delivery fires proximal→distal). See
+`README.md` / `docs/…design.md`.
 
 In the app it shows up as a new **"Kinematic Sequence"** tab in the analysis
 viewer (rendered by `web/src/components/KinematicSequence.jsx`), populated from
@@ -78,12 +79,13 @@ Set `PITCHER_ENGINE=mediapipe` to disable PitchCap entirely.
   "kinematic_sequence": {
     "fps": 300,
     "handedness": "L",
-    "sequence_order": ["pelvis", "trunk", "arm"],
-    "inter_peak_lags_ms": { "pelvis_to_trunk": 0.0, "trunk_to_arm": 13.3 },
+    "sequence_order": ["pelvis", "trunk", "shoulder", "elbow"],
+    "inter_peak_lags_ms": { "pelvis_to_trunk": 0.0, "trunk_to_shoulder": 8.3, "shoulder_to_elbow": 5.0 },
     "segments": {
-      "pelvis": { "peak_degps": 956.4, "peak_time_s": 0.887, "series_degps": [ … ] },
-      "trunk":  { "peak_degps": 533.2, "peak_time_s": 0.887, "series_degps": [ … ] },
-      "arm":    { "peak_degps": 3422.1,"peak_time_s": 0.900, "series_degps": [ … ] }
+      "pelvis":   { "peak_degps": 956.4, "peak_time_s": 0.887, "series_degps": [ … ] },
+      "trunk":    { "peak_degps": 533.2, "peak_time_s": 0.887, "series_degps": [ … ] },
+      "shoulder": { "peak_degps": 2014.8,"peak_time_s": 0.895, "series_degps": [ … ] },
+      "elbow":    { "peak_degps": 3422.1,"peak_time_s": 0.900, "series_degps": [ … ] }
     },
     "segment_warnings": []        // e.g. a segment whose joints were never reconstructed
   },
@@ -108,7 +110,7 @@ package or a degenerate clip simply omits `summary.pitchcap` rather than failing
 the analysis.
 
 Run the math test suite: `cd server/pitchcap && python3 -m pytest -q` (23 tests).
-Bridge glue tests: `cd server/scripts && python3 -m pytest test_pitchcap_bridge.py -q` (10 tests).
+Bridge glue tests: `cd server/scripts && python3 -m pytest test_pitchcap_bridge.py -q` (14 tests).
 
 ## Validation status
 
@@ -117,7 +119,8 @@ Bridge glue tests: `cd server/scripts && python3 -m pytest test_pitchcap_bridge.
   per-frame metrics are byte-identical to the MediaPipe engine, `summary.pitchcap`
   flows through to the result, the annotated video is served, and the result is
   strict-JSON over the wire. On a real 300fps clip PitchCap recovers a clean
-  pelvis→trunk→arm sequence (~913/509/4222 °/s after per-segment cutoffs).
+  pelvis→trunk→shoulder→elbow sequence (~913/509/2014/4222 °/s after
+  per-segment cutoffs).
 - Multi-view orchestration (RTMPose 2D → triangulation → web schema) smoke-tested
   end-to-end on real RTMPose output (`mode: multiview`, reprojection error
   reported). Its reconstruction math has unit coverage in

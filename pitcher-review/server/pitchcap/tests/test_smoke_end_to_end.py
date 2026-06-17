@@ -27,6 +27,7 @@ def test_multiview_pipeline_synthetic(tmp_path):
     X[:, C.R_SHOULDER] = [0, 0.5, 4]; X[:, C.L_SHOULDER] = [0.3, 0.5, 4]
     burst = 0.4 * np.exp(-((t - 0.5) ** 2) / (2 * 0.03 ** 2))
     X[:, C.R_ELBOW, 0] = burst; X[:, C.R_ELBOW, 1] = 0.3; X[:, C.R_ELBOW, 2] = 4
+    X[:, C.R_WRIST, 0] = -burst; X[:, C.R_WRIST, 1] = 0.0; X[:, C.R_WRIST, 2] = 4
 
     def project(P):
         out = np.zeros((T, C.N_KEYPOINTS, 2))
@@ -42,8 +43,9 @@ def test_multiview_pipeline_synthetic(tmp_path):
     kp3d = filter_keypoints(kp3d, fps, cutoff_hz=15)
     result = compute_kinematic_sequence(kp3d, fps, handedness="R")
 
-    assert set(result["segments"]) == {"pelvis", "trunk", "arm"}
-    assert result["segments"]["arm"]["peak_degps"] > 0
+    assert set(result["segments"]) == {"pelvis", "trunk", "shoulder", "elbow"}
+    assert result["segments"]["shoulder"]["peak_degps"] > 0
+    assert result["segments"]["elbow"]["peak_degps"] > 0
     assert err < 5.0
 
     out_json = tmp_path / "result.json"

@@ -874,7 +874,9 @@ def _segment_tracked_fractions(joint_ok, handedness, n):
         return {}
     sh = 6 if handedness == 'R' else 5      # throwing shoulder (R/L)
     el = 8 if handedness == 'R' else 7      # throwing elbow (R/L)
-    deps = {'pelvis': [11, 12], 'trunk': [11, 12, 5, 6], 'arm': [sh, el]}
+    wr = 10 if handedness == 'R' else 9     # throwing wrist (R/L)
+    deps = {'pelvis': [11, 12], 'trunk': [11, 12, 5, 6],
+            'shoulder': [sh, el], 'elbow': [sh, el, wr]}
 
     def frac(idxs):
         if any(ci not in joint_ok for ci in idxs):
@@ -886,7 +888,7 @@ def _segment_tracked_fractions(joint_ok, handedness, n):
 
 
 def attach_kinematic_sequence(summary, raw, motion_fps, throw_hand, joint_ok=None):
-    """Attach PitchCap's kinematic sequence (pelvis / trunk / throwing-arm
+    """Attach PitchCap's kinematic sequence (pelvis / trunk / shoulder / elbow
     angular velocity over time, each segment's peak magnitude, and the
     proximal→distal peak order + inter-peak lags) as ``summary['pitchcap']``.
 

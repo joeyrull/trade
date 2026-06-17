@@ -6,18 +6,29 @@ import { useMemo } from 'react';
 import { METRIC_COLORS, STATUS_COLORS } from '../theme';
 import { downsample } from '../lib/chart';
 
-// PitchCap's headline output: the kinematic sequence — pelvis, trunk, and
-// throwing-arm angular velocities (deg/s) over time, when each segment peaks,
-// and the order/lags between those peaks. A healthy delivery fires
-// proximal→distal: pelvis → trunk → arm. This panel only renders when the
-// analysis was produced by the PitchCap engine (summary.pitchcap present).
+// PitchCap's headline output: the kinematic sequence — pelvis, trunk,
+// shoulder (upper arm), and elbow (forearm) angular velocities (deg/s) over
+// time, when each segment peaks, and the order/lags between those peaks. A
+// healthy delivery fires proximal→distal: pelvis → trunk → shoulder → elbow.
+// This panel only renders when the analysis was produced by the PitchCap
+// engine (summary.pitchcap present).
 
+const SEGMENT_ORDER = ['pelvis', 'trunk', 'shoulder', 'elbow'];
 const SEGMENT_COLORS = {
-  pelvis: METRIC_COLORS.hipSpeed,
-  trunk:  METRIC_COLORS.chestSpeed,
-  arm:    METRIC_COLORS.armSpeed,
+  pelvis:   METRIC_COLORS.hipSpeed,
+  trunk:    METRIC_COLORS.chestSpeed,
+  shoulder: METRIC_COLORS.armSpeed,
+  elbow:    METRIC_COLORS.elbowAngle,
 };
-const SEGMENT_LABEL = { pelvis: 'Pelvis (hips)', trunk: 'Trunk', arm: 'Throwing arm' };
+const SEGMENT_LABEL = {
+  pelvis: 'Pelvis (hips)', trunk: 'Trunk',
+  shoulder: 'Shoulder (upper arm)', elbow: 'Elbow (forearm)',
+};
+const LAG_PAIRS = [
+  ['pelvis_to_trunk', 'pelvis', 'trunk'],
+  ['trunk_to_shoulder', 'trunk', 'shoulder'],
+  ['shoulder_to_elbow', 'shoulder', 'elbow'],
+];
 
 export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }) {
   const ks = pitchcap?.kinematic_sequence;
@@ -28,18 +39,16 @@ export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }
   const fps = ks?.fps || 30;
   const seekToTime = (t) => onSeek && t != null && onSeek(Math.round(t * fps));
   const chartData = useMemo(() => {
-    const pelvis = segments.pelvis?.series_degps || [];
-    const trunk = segments.trunk?.series_degps || [];
-    const arm = segments.arm?.series_degps || [];
-    const n = Math.max(pelvis.length, trunk.length, arm.length);
+    const series = SEGMENT_ORDER.map(name => segments[name]?.series_degps || []);
+    const n = Math.max(0, ...series.map(s => s.length));
     const rows = [];
     for (let i = 0; i < n; i++) {
-      rows.push({
-        t: parseFloat((i / fps).toFixed(3)),
-        pelvis: pelvis[i] != null ? parseFloat(pelvis[i].toFixed(1)) : null,
-        trunk: trunk[i] != null ? parseFloat(trunk[i].toFixed(1)) : null,
-        arm: arm[i] != null ? parseFloat(arm[i].toFixed(1)) : null,
+      const row = { t: parseFloat((i / fps).toFixed(3)) };
+      SEGMENT_ORDER.forEach((name, j) => {
+        const v = series[j][i];
+        row[name] = v != null ? parseFloat(v.toFixed(1)) : null;
       });
+      rows.push(row);
     }
     return downsample(rows);
   }, [segments, fps]);
@@ -48,12 +57,12 @@ export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }
 
   const order = ks.sequence_order || [];
   const lags = ks.inter_peak_lags_ms || {};
-  const properOrder = order.join(',') === 'pelvis,trunk,arm';
+  const properOrder = order.join(',') === SEGMENT_ORDER.join(',');
   const fmtLag = (v) => (v == null ? '—' : `${v} ms`);  // null lag (dead segment) shows '—', not '— ms'
   const warnings = [...new Set([...(ks.segment_warnings || []), ...(pitchcap.warnings || [])])];
 
   // Peak time markers (skip invalid segments whose peak_time_s is null).
-  const peakLines = ['pelvis', 'trunk', 'arm']
+  const peakLines = SEGMENT_ORDER
     .filter(name => segments[name]?.peak_time_s != null)
     .map(name => ({ name, t: parseFloat(segments[name].peak_time_s.toFixed(3)) }));
 
@@ -85,7 +94,7 @@ export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }
         <span
           className="ks-order-verdict"
           style={{ color: properOrder ? STATUS_COLORS.good : STATUS_COLORS.bad }}
-          title="A healthy delivery sequences proximal→distal: pelvis → trunk → arm."
+          title="A healthy delivery sequences proximal→distal: pelvis → trunk → shoulder → elbow."
         >
           {properOrder ? '✓ proper proximal→distal order' : '⚠ out of sequence'}
         </span>
@@ -93,7 +102,7 @@ export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }
 
       {/* Peak cards */}
       <div className="ks-peaks">
-        {['pelvis', 'trunk', 'arm'].map(name => {
+        {SEGMENT_ORDER.map(name => {
           const seg = segments[name];
           if (!seg) return null;
           const invalid = seg.peak_time_s == null;
@@ -130,14 +139,12 @@ export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }
 
       {/* Inter-peak lags */}
       <div className="ks-lags">
-        <div className="ks-lag">
-          <span className="ks-lag-val">{fmtLag(lags.pelvis_to_trunk)}</span>
-          <span className="ks-lag-label">pelvis → trunk</span>
-        </div>
-        <div className="ks-lag">
-          <span className="ks-lag-val">{fmtLag(lags.trunk_to_arm)}</span>
-          <span className="ks-lag-label">trunk → arm</span>
-        </div>
+        {LAG_PAIRS.map(([key, a, b]) => (
+          <div className="ks-lag" key={key}>
+            <span className="ks-lag-val">{fmtLag(lags[key])}</span>
+            <span className="ks-lag-label">{a} → {b}</span>
+          </div>
+        ))}
       </div>
 
       {/* Angular-velocity curves */}
@@ -160,9 +167,10 @@ export default function KinematicSequence({ pitchcap, currentFrame = 0, onSeek }
               <ReferenceLine key={name} x={t} stroke={SEGMENT_COLORS[name]} strokeDasharray="4 3" strokeOpacity={0.5} />
             ))}
             <ReferenceLine x={+(currentFrame / fps).toFixed(3)} stroke="var(--text)" strokeOpacity={0.65} />
-            <Line type="monotone" dataKey="pelvis" stroke={SEGMENT_COLORS.pelvis} dot={false} strokeWidth={2} connectNulls />
-            <Line type="monotone" dataKey="trunk" stroke={SEGMENT_COLORS.trunk} dot={false} strokeWidth={2} connectNulls />
-            <Line type="monotone" dataKey="arm" stroke={SEGMENT_COLORS.arm} dot={false} strokeWidth={2} connectNulls />
+            {SEGMENT_ORDER.map(name => (
+              <Line key={name} type="monotone" dataKey={name} stroke={SEGMENT_COLORS[name]}
+                dot={false} strokeWidth={2} connectNulls />
+            ))}
           </LineChart>
         </ResponsiveContainer>
       </div>

@@ -54,14 +54,17 @@ def test_dead_arm_joint_sorts_last_and_warns():
     kp = np.zeros((T, C.N_KEYPOINTS, 3))
     kp[:, C.R_HIP] = [0, 0, 0]; kp[:, C.L_HIP] = [1, 0, 0]
     kp[:, C.R_SHOULDER] = [0, 1, 0]; kp[:, C.L_SHOULDER] = [1, 1, 0]
+    kp[:, C.R_WRIST] = [0, 0, 0]
     # rotate pelvis then trunk
     kp[:, C.L_HIP, 1] += 0.3 * np.exp(-((t - 0.4) ** 2) / (2 * 0.02 ** 2))
     kp[:, C.L_SHOULDER, 0] += 0.3 * np.exp(-((t - 0.5) ** 2) / (2 * 0.02 ** 2))
-    # arm joints never reconstructed
+    # elbow never reconstructed -> both shoulder (sh->el) and elbow (el->wr) are dead
     kp[:, C.R_ELBOW, :] = np.nan
     res = compute_kinematic_sequence(kp, fps, handedness="R")
-    assert res["sequence_order"][-1] == "arm"          # invalid sorts last
-    assert any("arm" in w for w in res["segment_warnings"])
+    # invalid segments sort last, in SEGMENTS order (stable sort) when tied at inf
+    assert res["sequence_order"] == ["pelvis", "trunk", "shoulder", "elbow"]
+    assert any("shoulder" in w for w in res["segment_warnings"])
+    assert any("elbow" in w for w in res["segment_warnings"])
     assert np.isfinite(res["segments"]["pelvis"]["peak_degps"])
 
 
@@ -74,13 +77,16 @@ def test_dead_segment_output_is_json_safe():
     kp = np.zeros((T, C.N_KEYPOINTS, 3))
     kp[:, C.R_HIP] = [0, 0, 0]; kp[:, C.L_HIP] = [1, 0, 0]
     kp[:, C.R_SHOULDER] = [0, 1, 0]; kp[:, C.L_SHOULDER] = [1, 1, 0]
+    kp[:, C.R_WRIST] = [0, 0, 0]
     kp[:, C.L_HIP, 1] += 0.3 * np.exp(-((t - 0.4) ** 2) / (2 * 0.02 ** 2))
     kp[:, C.R_ELBOW, :] = np.nan                        # throwing arm never seen
     res = compute_kinematic_sequence(kp, fps, handedness="R")
 
-    # invalid arm -> lag is None (not inf), series uses null (not NaN)
-    assert res["inter_peak_lags_ms"]["trunk_to_arm"] is None
-    assert res["segments"]["arm"]["series_degps"][0] is None
+    # invalid shoulder/elbow -> lags are None (not inf), series uses null (not NaN)
+    assert res["inter_peak_lags_ms"]["trunk_to_shoulder"] is None
+    assert res["inter_peak_lags_ms"]["shoulder_to_elbow"] is None
+    assert res["segments"]["shoulder"]["series_degps"][0] is None
+    assert res["segments"]["elbow"]["series_degps"][0] is None
     # the whole structure round-trips as STRICT JSON (allow_nan=False) — exactly
     # the constraint JSON.parse enforces on the Node/browser side
     dumped = json.dumps(res, allow_nan=False)

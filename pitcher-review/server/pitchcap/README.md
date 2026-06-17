@@ -1,6 +1,6 @@
 # PitchCap
 
-Markerless motion-capture core for baseball pitching analysis. Turns 1–4 iPhone clips of a pitch into the **kinematic sequence**: pelvis, trunk, and throwing-arm angular velocities (deg/s), each segment's peak magnitude, and the timing/order of those peaks.
+Markerless motion-capture core for baseball pitching analysis. Turns 1–4 iPhone clips of a pitch into the **kinematic sequence**: pelvis, trunk, shoulder (upper arm), and elbow (forearm) angular velocities (deg/s), each segment's peak magnitude, and the timing/order of those peaks.
 
 Standalone tool — outputs `result.json` + `plot.png`. Design rationale in [`docs/superpowers/specs/2026-06-11-pitchcap-design.md`](docs/superpowers/specs/2026-06-11-pitchcap-design.md).
 
@@ -61,7 +61,7 @@ Honest about what at-home markerless can and cannot do:
 1. ✅ **3–4 camera scale consistency.** Reconstruction now runs in normalized coordinates, recovers each view's pose against camera 0, and resolves a single consistent global scale across all cameras (camera 1 defines the scale; cameras ≥3 are rescaled by aligning shared-joint depths). 3–4 views are geometrically consistent. *(See `reconstruct.py`, `tests/test_multiview_scale.py`.)*
 2. ✅ **Lens distortion is applied.** Each view's 2D points are undistorted by that view's own intrinsics (`geometry.normalize_points`) before essential-matrix and triangulation math, so calibrated distortion coefficients are now used. Per-view intrinsics differences are handled too.
 4. ✅ **Cross-view outlier rejection.** Triangulation uses minimal-subset (pairwise) RANSAC when ≥3 views are available, so a single bad keypoint in one view can't drag the 3D estimate.
-3. ✅ **Per-segment filter cutoffs.** `compute_kinematic_sequence(..., cutoffs=DEFAULT_CUTOFFS)` filters each segment's joints at its own band (13 Hz pelvis/trunk, 18 Hz arm) before differentiation, so the sharp arm-whip peak is preserved while the noisier rotation angles are filtered harder. A joint shared across segments is filtered independently for each. *(See `biomech.py`, `tests/test_biomech.py`.)*
+3. ✅ **Per-segment filter cutoffs.** `compute_kinematic_sequence(..., cutoffs=DEFAULT_CUTOFFS)` filters each segment's joints at its own band (13 Hz pelvis/trunk, 18 Hz shoulder/elbow) before differentiation, so the sharp arm-whip peaks are preserved while the noisier rotation angles are filtered harder. A joint shared across segments is filtered independently for each. *(See `biomech.py`, `tests/test_biomech.py`.)*
 
 **Remaining refinements (not blocking):**
 5. **Full bundle adjustment** (joint refinement of all camera poses + 3D points) is still deferred — the current global-scale resolution is a lighter-weight substitute. Worth adding if real-clip reprojection error is high.

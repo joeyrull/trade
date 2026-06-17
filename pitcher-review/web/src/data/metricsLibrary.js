@@ -12,11 +12,12 @@ export const METRICS_LIBRARY = [
     unit: '°/s',
     color: METRIC_COLORS.hipSpeed,
     aggregate: 'max',
-    grade: { good: 500, avg: 250 },
+    grade: { good: 550, avg: 250 },
     definition:
       'How fast the pelvis rotates toward home plate during the delivery. ' +
       'This is the first major rotational link in the kinetic chain — the hips should ' +
       'fire first and fastest, transferring energy up through the trunk, shoulders, and arm.',
+    reference: '581° – 811°/s (MLB average peak pelvis angular velocity)',
     drills: [
       'Med ball rotational throws (standing and step-behind) to train explosive hip drive.',
       'Resisted band hip rotations to build pelvis rotation speed and strength.',
@@ -34,7 +35,11 @@ export const METRICS_LIBRARY = [
     definition:
       'The angular velocity of the upper torso (shoulder line) as it rotates toward the plate. ' +
       'In an efficient kinetic chain, the chest reaches its peak rotation speed after the hips, ' +
-      'amplifying the energy passed up from the lower half before it reaches the arm.',
+      'amplifying the energy passed up from the lower half before it reaches the arm. ' +
+      'Pro mocap (3D marker-based) typically reads higher than this app\'s single-camera ' +
+      'pose estimate, so treat the good/average bands below as calibrated to this app\'s own ' +
+      'scale rather than an absolute MLB cutoff.',
+    reference: '861° – 1187°/s (MLB average peak trunk angular velocity, 3D marker-based mocap)',
     drills: [
       'Rotational med ball scoop throws to build torso rotational power.',
       'Cable or band torso rotations emphasizing speed, not just resistance.',
@@ -52,7 +57,11 @@ export const METRICS_LIBRARY = [
     definition:
       'How quickly the elbow extends during the arm-acceleration phase, just before release. ' +
       'This reflects the "whip" of the arm at the end of the kinetic chain — a product of everything ' +
-      'that happened in the hips, trunk, and shoulder up to this point, not just arm strength.',
+      'that happened in the hips, trunk, and shoulder up to this point, not just arm strength. ' +
+      'Pro 3D marker-based mocap measures elbow extension several times faster than a single-camera ' +
+      'pose estimate can resolve, so the good/average bands below are calibrated to this app\'s own ' +
+      'scale rather than an absolute MLB cutoff.',
+    reference: '2030° – 2542°/s (MLB average peak elbow extension velocity, 3D marker-based mocap)',
     drills: [
       'Plyo-care/weighted ball drills (under qualified supervision) to train arm-speed acceleration.',
       'Long toss programs to build arm speed across distances.',
@@ -66,12 +75,12 @@ export const METRICS_LIBRARY = [
     unit: '°',
     color: METRIC_COLORS.hss,
     aggregate: 'max',
-    grade: { good: 25, avg: 12 },
+    grade: { good: 32, avg: 18 },
     definition:
       'The angular difference between hip rotation and shoulder rotation at any instant. ' +
       'Elite pitchers create a large separation (the hips open while the shoulders stay closed), ' +
-      'storing elastic energy in the trunk that whips the shoulders and arm through afterward. ' +
-      'Elite range is roughly 25-45°.',
+      'storing elastic energy in the trunk that whips the shoulders and arm through afterward.',
+    reference: '32° – 52° (MLB average range at front-foot plant)',
     drills: [
       '"Stride and hold" drills — stride out and rotate the hips while keeping the shoulders closed for a beat.',
       'Med ball separation throws: rotate the hips first, delay the upper body turn.',
@@ -139,6 +148,9 @@ export const METRICS_LIBRARY = [
       'The bend at the elbow joint over time (180° = fully extended, smaller values = more bent). ' +
       'A typical pattern shows the elbow flexed during arm cocking, then rapidly extending toward ' +
       '180° around release. A smooth, late extension pattern is generally desirable.',
+    reference:
+      '~56°-86° at foot plant, ~86°-106° at max external rotation, ~150°-160° at release ' +
+      '(MLB average, converted from Kinatrax\'s straight-arm = 0° convention to this app\'s 180°)',
     drills: [
       'Wrist-weight or light-band extension drills to train a quick, late elbow snap toward release.',
       'Drop-and-drive arm circles to groove a natural flexion-to-extension pattern.',

@@ -68,7 +68,7 @@ export default function LabReport({ summary, frames, currentFrame, onSeek }) {
 }
 
 function LabMetricCard({ metric, chartData, refLines, currentT, onSeek }) {
-  const { key, label, unit, color, definition, drills, aggregate, grade: gradeCfg } = metric;
+  const { key, label, unit, color, definition, reference, drills, aggregate, grade: gradeCfg } = metric;
 
   let maxEntry = null, minEntry = null;
   for (const d of chartData) {
@@ -118,6 +118,7 @@ function LabMetricCard({ metric, chartData, refLines, currentT, onSeek }) {
       </div>
 
       <p className="lab-metric-definition">{definition}</p>
+      {reference && <p className="lab-metric-reference">MLB / Kinatrax reference: {reference}</p>}
 
       <div className="lab-chart-panel">
         <ResponsiveContainer width="100%" height={220}>

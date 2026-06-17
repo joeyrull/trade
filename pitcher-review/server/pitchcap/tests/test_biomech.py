@@ -36,21 +36,26 @@ def test_sequence_order_and_peaks():
     # static base geometry
     kp[:, C.R_HIP] = [0, 0, 0]; kp[:, C.L_HIP] = [1, 0, 0]
     kp[:, C.R_SHOULDER] = [0, 1, 0]; kp[:, C.L_SHOULDER] = [1, 1, 0]
-    kp[:, C.R_ELBOW] = [0, 0.5, 0]
+    kp[:, C.R_ELBOW] = [0, 0.5, 0]; kp[:, C.R_WRIST] = [0, 0, 0]
 
     # inject a rotation burst into each segment at staggered times
     def burst(center_s, amp):
         return amp * np.exp(-((t - center_s) ** 2) / (2 * 0.02 ** 2))
 
-    # rotate L_HIP (pelvis) first, sh_mid (trunk) next, elbow (arm) last
+    # rotate L_HIP (pelvis), sh_mid (trunk), elbow (shoulder), wrist (elbow)
+    # in that order -- the proximal->distal pattern.
     kp[:, C.L_HIP, 1] += burst(0.40, 0.3)
     kp[:, C.L_SHOULDER, 0] += burst(0.50, 0.3)
-    kp[:, C.R_ELBOW, 0] += burst(0.60, 0.5)
+    kp[:, C.R_ELBOW, 0] += burst(0.60, 0.3)
+    kp[:, C.R_WRIST, 0] += burst(0.70, 0.5)
 
     res = compute_kinematic_sequence(kp, fps, handedness="R")
-    assert res["sequence_order"] == ["pelvis", "trunk", "arm"]
-    assert res["segments"]["arm"]["peak_degps"] > 0
+    assert res["sequence_order"] == ["pelvis", "trunk", "shoulder", "elbow"]
+    assert res["segments"]["shoulder"]["peak_degps"] > 0
+    assert res["segments"]["elbow"]["peak_degps"] > 0
     assert res["inter_peak_lags_ms"]["pelvis_to_trunk"] > 0
+    assert res["inter_peak_lags_ms"]["trunk_to_shoulder"] > 0
+    assert res["inter_peak_lags_ms"]["shoulder_to_elbow"] > 0
 
 
 from pitchcap.filtering import DEFAULT_CUTOFFS
@@ -71,10 +76,10 @@ def test_per_segment_cutoffs_attenuate_arm_jitter():
 
     raw = compute_kinematic_sequence(kp, fps, handedness="R")                       # no filtering
     filt = compute_kinematic_sequence(kp, fps, handedness="R", cutoffs=DEFAULT_CUTOFFS)
-    # the 18Hz arm cutoff removes the 60Hz-driven velocity spikes
-    assert filt["segments"]["arm"]["peak_degps"] < raw["segments"]["arm"]["peak_degps"]
+    # the 18Hz shoulder cutoff removes the 60Hz-driven velocity spikes
+    assert filt["segments"]["shoulder"]["peak_degps"] < raw["segments"]["shoulder"]["peak_degps"]
     # structure stays valid and the real 2Hz motion survives
-    assert filt["segments"]["arm"]["peak_degps"] > 0
+    assert filt["segments"]["shoulder"]["peak_degps"] > 0
     assert filt["sequence_order"]
 
 
@@ -84,4 +89,4 @@ def test_cutoffs_none_is_unfiltered_passthrough():
     kp = np.random.RandomState(3).randn(T, C.N_KEYPOINTS, 3)
     a = compute_kinematic_sequence(kp, fps, handedness="R")
     b = compute_kinematic_sequence(kp, fps, handedness="R", cutoffs=None)
-    assert a["segments"]["arm"]["series_degps"] == b["segments"]["arm"]["series_degps"]
+    assert a["segments"]["shoulder"]["series_degps"] == b["segments"]["shoulder"]["series_degps"]

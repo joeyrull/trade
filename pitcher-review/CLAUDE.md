@@ -40,8 +40,8 @@ optionally cross-syncs and fuses two cameras.
   `rtmlib`+`onnxruntime`; falls back to monocular on camera 0.
 
 PitchCap (`server/pitchcap/`) is a standalone markerless motion-capture core;
-its headline output is the kinematic sequence (pelvis→trunk→arm angular
-velocity, peak timing/order). Integration detail:
+its headline output is the kinematic sequence (pelvis→trunk→shoulder→elbow
+angular velocity, peak timing/order). Integration detail:
 `server/pitchcap/docs/INTEGRATION.md`.
 
 ## Hard invariants
@@ -70,7 +70,7 @@ cd web && npm run dev      # or: npm run build
 
 # Python tests (pytest not installed by default: pip install pytest)
 cd server/pitchcap && python3 -m pytest -q          # 23 tests (PitchCap math core)
-cd server/scripts  && python3 -m pytest test_pitchcap_bridge.py -q   # 11 tests (bridge glue)
+cd server/scripts  && python3 -m pytest test_pitchcap_bridge.py -q   # 14 tests (bridge glue)
 ```
 
 Python deps already present in the analysis env: `numpy scipy opencv-python
