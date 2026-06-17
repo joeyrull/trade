@@ -30,6 +30,8 @@ export const METRIC_COLORS = {
   elbowH:      '#b08a92', // warm mauve
   elbowAngle:  '#c9a87e', // tan
   trunkTilt:   '#c99a52', // ochre
+  armSlot:     '#9a7bb0', // muted violet
+  leadKneeExt: '#5f9ac2', // steel blue
 };
 
 // A/B/C grade colors

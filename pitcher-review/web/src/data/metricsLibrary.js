@@ -89,6 +89,61 @@ export const METRICS_LIBRARY = [
     ],
   },
   {
+    key: 'leadKneeExt',
+    label: 'Lead Knee Extension Velocity',
+    unit: '°/s',
+    color: METRIC_COLORS.leadKneeExt,
+    aggregate: 'max',
+    grade: { good: 300, avg: 150 },
+    definition:
+      'How fast the front (lead) knee straightens after the foot plants. A stiff, ' +
+      'fast-bracing front leg acts like a lever that redirects the lower half\'s ' +
+      'momentum up the chain into trunk rotation and arm speed — pitchers who "post up" ' +
+      'on a firm front leg generally throw harder. A knee that keeps bending (collapsing) ' +
+      'after foot strike instead reads near zero here.',
+    reference: '~150° – 420°/s peak extension (MLB average, after foot plant)',
+    drills: [
+      'Stride-and-stick drills: land and freeze on a firm front leg without letting the knee drift forward.',
+      'Front-leg blocking / "post" drills against a wall or band to feel the lead leg bracing.',
+      'Single-leg eccentric strength work (Bulgarian split squats, slant-board step-downs) for a stiffer landing.',
+      'Video review checking the lead knee extends (not collapses) from foot strike through release.',
+    ],
+  },
+  {
+    key: 'armSlot',
+    label: 'Arm Slot (at Release)',
+    unit: '°',
+    color: METRIC_COLORS.armSlot,
+    aggregate: 'atKeyFrame',
+    keyFrame: 'release',
+    keyFrameLabel: 'At release',
+    summaryKey: 'arm_slot_at_release',
+    // Slot is a style/identity, not a "good vs bad" — so it's classified, not graded.
+    classify: (v) => {
+      if (v < 40) return 'Overhead';
+      if (v < 50) return 'High Three-Quarter';
+      if (v < 60) return 'Three-Quarter';
+      if (v < 70) return 'Low Three-Quarter';
+      if (v < 90) return 'Sidearm';
+      if (v < 110) return 'Low Sidearm';
+      return 'Submarine';
+    },
+    definition:
+      'The elevation of the throwing arm at release — 0° is straight overhead, 90° is ' +
+      'straight out to the side (sidearm). Arm slot is created mostly by lateral trunk tilt, ' +
+      'not the shoulder, and it shapes a pitcher\'s movement profile (e.g. higher slots favor ' +
+      'ride/drop, lower slots favor sweep/run). It\'s an identity, not a grade — there\'s no ' +
+      '"good" slot, only what plays to your pitch mix.',
+    reference:
+      'Overhead <40°, High ¾ 40–50°, ¾ 50–60°, Low ¾ 60–70°, Sidearm 70–90°, ' +
+      'Low Sidearm 90–110°, Submarine >110° (Kinatrax arm-slot bands)',
+    drills: [
+      'Slot is hard to change directly — adjust it through lateral trunk tilt drills, not by reaching the arm higher/lower.',
+      'Wall / mirror drills to feel a consistent, repeatable release posture.',
+      'Video review confirming the slot is repeatable pitch-to-pitch (consistency matters more than the angle itself).',
+    ],
+  },
+  {
     key: 'hip',
     label: 'Hip Rotation Angle',
     unit: '°',

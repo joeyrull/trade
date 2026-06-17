@@ -607,7 +607,9 @@ def phase_for_frame(phases, i):
 
 def compute_metrics(motion_fps, n, hip_angs, sho_angs, trunk_angs, elbow_angs,
                      elbow_ok, hip_ang_ok, sho_ang_ok, low_conf,
-                     lay, tey, wrist_disp, elbow_height_pct):
+                     lay, tey, wrist_disp, elbow_height_pct,
+                     arm_slot_angs=None, arm_slot_ok=None,
+                     knee_angs=None, knee_ok=None):
     """Compute per-frame motion metrics, phases, and the motion_fps-dependent
     summary fields from the raw (pre-filter) angle/position series.
 
@@ -616,6 +618,12 @@ def compute_metrics(motion_fps, n, hip_angs, sho_angs, trunk_angs, elbow_angs,
     Used both for the initial analysis and to rebuild a clip's metrics with a
     corrected motion_fps after cross-camera sync (see analysis.js and the
     --rebuild CLI mode below).
+
+    ``arm_slot_angs`` (throwing-arm elevation angle at each frame) and
+    ``knee_angs`` (lead-knee flexion angle) are optional: callers that don't
+    track the lead leg / arm slot (e.g. the multiview path, or a rebuild from
+    an older series.json) pass None and those metrics are simply omitted, so
+    the per-frame schema stays additive and backward-compatible.
     """
     hip_s   = lowpass(hip_angs,   motion_fps, ROT_CUTOFF_HZ)
     sho_s   = lowpass(sho_angs,   motion_fps, ROT_CUTOFF_HZ)
@@ -624,6 +632,16 @@ def compute_metrics(motion_fps, n, hip_angs, sho_angs, trunk_angs, elbow_angs,
     hip_vel   = derivative(hip_s,   motion_fps)
     chest_vel = derivative(sho_s,   motion_fps)
     arm_vel   = derivative(elbow_s, motion_fps)
+
+    # Optional add-on series (lead-knee extension velocity is motion_fps-
+    # dependent, so it must be derived here for the --rebuild path to stay
+    # correct; arm slot is just an angle, smoothed for a clean release reading).
+    have_slot = arm_slot_angs is not None
+    have_knee = knee_angs is not None
+    arm_slot_s = lowpass(arm_slot_angs, motion_fps, ROT_CUTOFF_HZ) if have_slot else None
+    if have_knee:
+        knee_s   = lowpass(knee_angs, motion_fps, ROT_CUTOFF_HZ)
+        knee_vel = derivative(knee_s, motion_fps)   # +deg/s = extending toward straight
 
     frame_metrics = []
     for i in range(n):
@@ -637,7 +655,7 @@ def compute_metrics(motion_fps, n, hip_angs, sho_angs, trunk_angs, elbow_angs,
         hip_disp = ((hip_s[i] + 180) % 360) - 180
         sho_disp = ((sho_s[i] + 180) % 360) - 180
 
-        frame_metrics.append({
+        fm = {
             'hip_rotation':         round(hip_disp,       2),
             'shoulder_rotation':    round(sho_disp,       2),
             'hip_shoulder_sep':     round(abs(hss),        2),
@@ -648,7 +666,14 @@ def compute_metrics(motion_fps, n, hip_angs, sho_angs, trunk_angs, elbow_angs,
             'arm_speed':            round(arm_vel[i],     2),
             'trunk_tilt':           round(trunk_s[i],     2),
             'low_confidence':       bool(low_conf[i]),
-        })
+        }
+        if have_slot:
+            fm['arm_slot'] = round(float(arm_slot_s[i]), 2)
+        if have_knee:
+            # extension rate only (clamp the flexion/loading half to 0): a fast
+            # front-leg brace shows up as a positive value, a collapsing knee ~0.
+            fm['lead_knee_ext_speed'] = round(max(0.0, float(knee_vel[i])), 2)
+        frame_metrics.append(fm)
 
     wrist_speed = [d * motion_fps for d in wrist_disp]
     phases = detect_phases(lay, tey, wrist_speed, motion_fps)
@@ -733,6 +758,21 @@ def compute_metrics(motion_fps, n, hip_angs, sho_angs, trunk_angs, elbow_angs,
             'low_confidence':    bool(hip_peak_lc or chest_peak_lc or arm_peak_lc),
         },
     }
+
+    # Optional add-on summary peaks (only when the caller tracked them).
+    sp = summary_fields['peak']
+    if have_slot and release_f < n:
+        sp['arm_slot_at_release'] = round(float(arm_slot_s[release_f]), 1)
+        sp['arm_slot_at_release_frame'] = int(release_f)
+        sp['arm_slot_at_release_low_confidence'] = bool(arm_slot_ok is None or not arm_slot_ok[release_f])
+    if have_knee:
+        knee_ext = [m.get('lead_knee_ext_speed', 0.0) for m in frame_metrics]
+        kmask = knee_ok if knee_ok is not None else [True] * n
+        knee_peak_f, knee_peak_lc = best_peak(knee_ext, kmask, fs_f, spd_hi, n)
+        sp['peak_lead_knee_ext_speed'] = round(knee_ext[knee_peak_f], 1)
+        sp['peak_lead_knee_ext_speed_frame'] = int(knee_peak_f)
+        sp['peak_lead_knee_ext_speed_low_confidence'] = bool(knee_peak_lc)
+
     return frame_metrics, frame_phases, summary_fields
 
 
@@ -1184,6 +1224,8 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None,
     tw_name = f'{throw_side}_wrist'
     lead_side = 'right' if throw_hand == 'left' else 'left'
     la_name = f'{lead_side}_ankle'
+    lh_name = f'{lead_side}_hip'
+    lk_name = f'{lead_side}_knee'
 
     # Express the short-gap interpolation window in real time so it covers
     # the same span of motion regardless of frame rate.
@@ -1201,7 +1243,9 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None,
     tex, tey, tez, te_ok = build_robust_series(raw, te_name, max_gap=max_gap)
     twx, twy, twz, tw_ok = build_robust_series(raw, tw_name, max_gap=max_gap)
     tsx, tsy, tsz, ts_ok = build_robust_series(raw, ts_name, max_gap=max_gap)
-    _, lay, _, _ = build_robust_series(raw, la_name, max_gap=max_gap)
+    lkx, lky, lkz, lk_ok = build_robust_series(raw, lk_name, max_gap=max_gap)   # lead knee
+    lax, lay, laz, la_ok = build_robust_series(raw, la_name, max_gap=max_gap)   # lead ankle
+    lead_hip_ok = lh_ok if lead_side == 'left' else rh_ok
 
     low_conf = [not (lh_ok[i] and rh_ok[i] and ls_ok[i] and rs_ok[i]
                       and te_ok[i] and tw_ok[i] and ts_ok[i])
@@ -1310,6 +1354,47 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None,
         sho_mx, sho_my = (lsx[i] + rsx[i]) / 2, (lsy[i] + rsy[i]) / 2
         trunk_angs.append(float(np.degrees(np.arctan2(sho_mx - hip_mx, hip_my - sho_my))))
 
+    # ── Lead-knee flexion angle & throwing-arm slot ────────────────────────
+    # Both are computed from 3D world landmarks (isotropic, robust to a limb
+    # pointing toward/away from the camera) the same way the elbow angle is.
+    #   * Knee flexion: angle at the knee between thigh (knee->hip) and shank
+    #     (knee->ankle); ~180 deg is a straight leg. Its angular velocity (in
+    #     compute_metrics) is the lead-leg bracing/extension rate.
+    #   * Arm slot: elevation of the throwing arm (shoulder->wrist) from
+    #     vertical — 0 deg straight up, 90 deg horizontal, >90 deg submarine.
+    #     World y is image-down, so the up-component is (shoulder_y - wrist_y).
+    whx, why, whz = world_track(lh_name, lead_hip_ok)
+    wkx, wky, wkz = world_track(lk_name, lk_ok)
+    wax, way, waz = world_track(la_name, la_ok)
+    knee_angs, knee_ok = [], []
+    arm_slot_angs, arm_slot_ok = [], []
+    for i in range(n):
+        kok = bool(lead_hip_ok[i] and lk_ok[i] and la_ok[i])
+        if has_world:
+            kang = angle_3pt_3d(whx[i], why[i], whz[i],
+                                wkx[i], wky[i], wkz[i],
+                                wax[i], way[i], waz[i])
+        else:
+            lhx_i = lhx[i] if lead_side == 'left' else rhx[i]
+            lhy_i = lhy[i] if lead_side == 'left' else rhy[i]
+            kang = angle_3pt(lhx_i, lhy_i, lkx[i], lky[i], lax[i], lay[i])
+        if not kok and knee_angs:
+            kang = knee_angs[-1]
+        knee_angs.append(kang)
+        knee_ok.append(kok)
+
+        aok = bool(ts_ok[i] and tw_ok[i])
+        if has_world:
+            ax, ayv, az = wwx[i] - wsx[i], wwy[i] - wsy[i], wwz[i] - wsz[i]
+            mag = (ax * ax + ayv * ayv + az * az) ** 0.5 + 1e-9
+            slot = float(np.degrees(np.arccos(np.clip((wsy[i] - wwy[i]) / mag, -1.0, 1.0))))
+        else:
+            slot = float(np.degrees(np.arctan2(abs(twx[i] - tsx[i]), tsy[i] - twy[i])))
+        if not aok and arm_slot_angs:
+            slot = arm_slot_angs[-1]
+        arm_slot_angs.append(slot)
+        arm_slot_ok.append(aok)
+
     if os.environ.get('PITCHER_DEBUG_LOWCONF'):
         print_low_conf_diagnostics(raw, n, cropped, roi_norm, roi_w, roi_h,
                                     lh_ok, rh_ok, ls_ok, rs_ok, te_ok, tw_ok, ts_ok,
@@ -1324,7 +1409,9 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None,
     frame_metrics, frame_phases, mf_summary = compute_metrics(
         motion_fps, n, hip_angs, sho_angs, trunk_angs, elbow_angs,
         elbow_ok, hip_ang_ok, sho_ang_ok, low_conf,
-        lay.tolist(), tey.tolist(), wrist_disp, elbow_height_pct)
+        lay.tolist(), tey.tolist(), wrist_disp, elbow_height_pct,
+        arm_slot_angs=arm_slot_angs, arm_slot_ok=arm_slot_ok,
+        knee_angs=knee_angs, knee_ok=knee_ok)
 
     for i, rec in enumerate(raw):
         rec['metrics'] = frame_metrics[i]
@@ -1341,6 +1428,8 @@ def analyze_video(video_path, output_dir, throw_hand='left', progress_cb=None,
             'elbow_ok': elbow_ok, 'hip_ang_ok': hip_ang_ok, 'sho_ang_ok': sho_ang_ok,
             'low_conf': low_conf, 'lay': lay.tolist(), 'tey': tey.tolist(),
             'wrist_disp': wrist_disp, 'elbow_height_pct': elbow_height_pct,
+            'arm_slot_angs': arm_slot_angs, 'arm_slot_ok': arm_slot_ok,
+            'knee_angs': knee_angs, 'knee_ok': knee_ok,
         }, fp)
 
     summary = {
@@ -1489,7 +1578,9 @@ def rebuild_metrics(series_path, metrics_path, motion_fps, out_path):
         motion_fps, n,
         series['hip_angs'], series['sho_angs'], series['trunk_angs'], series['elbow_angs'],
         series['elbow_ok'], series['hip_ang_ok'], series['sho_ang_ok'], series['low_conf'],
-        series['lay'], series['tey'], series['wrist_disp'], series['elbow_height_pct'])
+        series['lay'], series['tey'], series['wrist_disp'], series['elbow_height_pct'],
+        arm_slot_angs=series.get('arm_slot_angs'), arm_slot_ok=series.get('arm_slot_ok'),
+        knee_angs=series.get('knee_angs'), knee_ok=series.get('knee_ok'))
 
     frames = existing['frames']
     for i, fr in enumerate(frames):

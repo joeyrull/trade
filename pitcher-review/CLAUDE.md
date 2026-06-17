@@ -58,7 +58,9 @@ angular velocity, peak timing/order). Integration detail:
   phase_confidence, auto_zoom`, optional `pitchcap`. Per-frame `metrics`:
   `hip_rotation, shoulder_rotation, hip_shoulder_sep, elbow_angle,
   elbow_height_pct, hip_rotation_speed, chest_rotation_speed, arm_speed,
-  trunk_tilt, low_confidence`.
+  trunk_tilt, low_confidence`, plus optional `arm_slot` and
+  `lead_knee_ext_speed` (monocular path only; absent on the multiview path and
+  on analyses produced before they were added — frontend guards for both).
 
 ## Run / test
 

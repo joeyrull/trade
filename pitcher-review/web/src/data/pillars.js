@@ -10,7 +10,7 @@ function elbowHeightAtMER(summary, frames) {
 export const PILLARS = [
   {
     name: 'Lower Half',
-    description: 'How explosively the hips initiate the delivery — the first link in the kinetic chain.',
+    description: 'How explosively the hips initiate the delivery and the lead leg braces — the first and last links in the lower-body chain.',
     metrics: [
       {
         label: 'Hip Rotation Speed',
@@ -19,6 +19,16 @@ export const PILLARS = [
         good: 550,
         getValue: (summary) => summary.peak?.max_hip_rotation_speed,
         getLowConfidence: (summary) => summary.peak?.max_hip_rotation_speed_low_confidence,
+      },
+      {
+        // Absent on analyses produced before this metric existed → getValue
+        // returns undefined → scoreMetric returns null → silently dropped.
+        label: 'Lead Knee Extension',
+        unit: '°/s',
+        avg: 150,
+        good: 300,
+        getValue: (summary) => summary.peak?.peak_lead_knee_ext_speed,
+        getLowConfidence: (summary) => summary.peak?.peak_lead_knee_ext_speed_low_confidence,
       },
     ],
   },

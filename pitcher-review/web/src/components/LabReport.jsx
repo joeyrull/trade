@@ -28,6 +28,9 @@ export default function LabReport({ summary, frames, currentFrame, onSeek }) {
       elbowAngle: parseFloat(f.metrics.elbow_angle.toFixed(1)),
       elbowH: parseFloat(f.metrics.elbow_height_pct.toFixed(2)),
       trunkTilt: parseFloat(f.metrics.trunk_tilt.toFixed(2)),
+      // Newer metrics — guarded so analyses produced before they existed don't crash.
+      armSlot: f.metrics.arm_slot != null ? parseFloat(f.metrics.arm_slot.toFixed(1)) : null,
+      leadKneeExt: f.metrics.lead_knee_ext_speed != null ? parseFloat(f.metrics.lead_knee_ext_speed.toFixed(1)) : null,
       lowConf: f.metrics.low_confidence,
     }))
   ), [frames]);
@@ -61,17 +64,25 @@ export default function LabReport({ summary, frames, currentFrame, onSeek }) {
           refLines={refLines}
           currentT={currentT}
           onSeek={onSeek}
+          summary={summary}
         />
       ))}
     </div>
   );
 }
 
-function LabMetricCard({ metric, chartData, refLines, currentT, onSeek }) {
-  const { key, label, unit, color, definition, reference, drills, aggregate, grade: gradeCfg } = metric;
+function LabMetricCard({ metric, chartData, refLines, currentT, onSeek, summary }) {
+  const { key, label, unit, color, definition, reference, drills, aggregate, grade: gradeCfg,
+          summaryKey, keyFrameLabel, classify } = metric;
+
+  // Skip metrics with no data on this analysis (e.g. produced before the
+  // metric existed) rather than rendering an empty/NaN card.
+  const hasData = chartData.some(d => d[key] != null);
+  if (!hasData) return null;
 
   let maxEntry = null, minEntry = null;
   for (const d of chartData) {
+    if (d[key] == null) continue;
     if (maxEntry === null || d[key] > maxEntry[key]) maxEntry = d;
     if (minEntry === null || d[key] < minEntry[key]) minEntry = d;
   }
@@ -81,8 +92,17 @@ function LabMetricCard({ metric, chartData, refLines, currentT, onSeek }) {
   let badge = null;
   let headlineLabel = '';
   let headlineValue = '';
+  let classification = null;
   let lowConfidence = false;
-  if (aggregate === 'max') {
+  if (aggregate === 'atKeyFrame') {
+    // A point-in-time reading (e.g. arm slot at release) sourced from the
+    // summary peak block, since downsampling can drop the exact key frame.
+    const v = summary?.peak?.[summaryKey];
+    headlineLabel = keyFrameLabel || 'At key frame';
+    headlineValue = v != null ? `${v.toFixed(1)}${unit}` : '—';
+    lowConfidence = !!summary?.peak?.[`${summaryKey}_low_confidence`];
+    if (classify && v != null) classification = classify(v);
+  } else if (aggregate === 'max') {
     headlineLabel = 'Peak';
     headlineValue = `${maxVal.toFixed(1)}${unit}`;
     lowConfidence = !!maxEntry?.lowConf;
@@ -111,6 +131,9 @@ function LabMetricCard({ metric, chartData, refLines, currentT, onSeek }) {
               <span className="low-conf-badge" title="Includes a low-confidence pose tracking frame — value may be inaccurate.">⚠</span>
             )}
           </span>
+          {classification && (
+            <span className="lab-slot-class" style={{ borderColor: color, color }}>{classification}</span>
+          )}
           {badge && (
             <span className="lab-grade-badge" style={{ background: badge.color }}>{badge.letter}</span>
           )}

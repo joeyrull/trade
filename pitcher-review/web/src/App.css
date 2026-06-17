@@ -907,6 +907,16 @@ body {
   font-weight: 700;
   color: #fff;
 }
+.lab-slot-class {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 .lab-metric-definition {
   font-size: 13px;
   color: var(--text-secondary);
